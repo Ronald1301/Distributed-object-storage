@@ -19,7 +19,7 @@ Una arquitectura posible:
    └────────┘ └────────┘ └────────┘
 ```
 
-Pueden implementar primero:
+Metodos a implementar primero:
 
 ```text
 PUT
@@ -28,7 +28,7 @@ DELETE
 LIST
 ```
 
-Y después añadir:
+Propiedades a cumplir:
 
 - Replicación.
 - Hashing/ubicación.
