@@ -1,0 +1,141 @@
+# P16 — Servicio distribuido de almacenamiento de objetos
+#
+#   docker compose up -d --build        # gateway + 3 storage nodes + PostgreSQL
+#   docker compose --profile scale up -d storage4   # añadir un 4º nodo
+#   docker compose down                 # parar (conserva datos)
+#   docker compose down -v              # parar y borrar todos los volúmenes
+#
+# Cada Storage Node es un contenedor independiente con su PROPIO volumen:
+# simula "una máquina por nodo". Los nodos sólo están en la red interna;
+# el cliente únicamente ve el gateway (puerto 8080).
+
+name: p16
+
+x-storage-env: &storage-env
+  GATEWAY_URL: http://gateway:8080
+  DATA_DIR: /data
+  PUSH_TIMEOUT_SECONDS: "10"
+
+x-storage-node: &storage-node
+  build: ./storage-node
+  image: p16-storage-node
+  init: true
+  networks: [internal]
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=2)"]
+    interval: 5s
+    timeout: 3s
+    retries: 3
+    start_period: 5s
+
+services:
+  metadata-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: p16
+      POSTGRES_PASSWORD: p16
+      POSTGRES_DB: p16
+    volumes:
+      - metadata-data:/var/lib/postgresql/data
+    networks: [internal]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U p16 -d p16"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  gateway:
+    build: ./gateway
+    image: p16-gateway
+    init: true
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql://p16:p16@metadata-db:5432/p16
+      # --- contrato de redundancia / durabilidad ---
+      REPLICATION_FACTOR: ${REPLICATION_FACTOR:-2}
+      WRITE_ACKS: ${WRITE_ACKS:-2}
+      MAX_OBJECT_SIZE_MB: ${MAX_OBJECT_SIZE_MB:-64}
+      STORAGE_TIMEOUT_SECONDS: ${STORAGE_TIMEOUT_SECONDS:-5}
+      # --- detector de fallos ---
+      HEALTH_INTERVAL_SECONDS: ${HEALTH_INTERVAL_SECONDS:-2}
+      HEALTH_TIMEOUT_SECONDS: ${HEALTH_TIMEOUT_SECONDS:-1}
+      SUSPECT_AFTER: ${SUSPECT_AFTER:-1}
+      DOWN_AFTER: ${DOWN_AFTER:-3}
+      REPAIR_DELAY_SECONDS: ${REPAIR_DELAY_SECONDS:-30}
+      # --- reconciliación / reparación ---
+      RECONCILE_INTERVAL_SECONDS: ${RECONCILE_INTERVAL_SECONDS:-10}
+      SCRUB_INTERVAL_SECONDS: ${SCRUB_INTERVAL_SECONDS:-300}
+      ORPHAN_GRACE_SECONDS: ${ORPHAN_GRACE_SECONDS:-60}
+      DELETE_GRACE_SECONDS: ${DELETE_GRACE_SECONDS:-5}
+      MAX_COPIES_PER_CYCLE: ${MAX_COPIES_PER_CYCLE:-200}
+    depends_on:
+      metadata-db:
+        condition: service_healthy
+    networks: [public, internal]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  storage1:
+    <<: *storage-node
+    hostname: storage1
+    environment:
+      <<: *storage-env
+      NODE_ID: storage1
+      NODE_URL: http://storage1:9000
+      NODE_WEIGHT: "1"
+    volumes:
+      - storage1-data:/data
+
+  storage2:
+    <<: *storage-node
+    hostname: storage2
+    environment:
+      <<: *storage-env
+      NODE_ID: storage2
+      NODE_URL: http://storage2:9000
+      NODE_WEIGHT: "1"
+    volumes:
+      - storage2-data:/data
+
+  storage3:
+    <<: *storage-node
+    hostname: storage3
+    environment:
+      <<: *storage-env
+      NODE_ID: storage3
+      NODE_URL: http://storage3:9000
+      NODE_WEIGHT: "1"
+    volumes:
+      - storage3-data:/data
+
+  # Nodo adicional para demostrar cambios de membresía/capacidad.
+  # Se arranca explícitamente: docker compose --profile scale up -d storage4
+  storage4:
+    <<: *storage-node
+    profiles: [scale]
+    hostname: storage4
+    environment:
+      <<: *storage-env
+      NODE_ID: storage4
+      NODE_URL: http://storage4:9000
+      NODE_WEIGHT: "1"
+    volumes:
+      - storage4-data:/data
+
+networks:
+  public: {}
+  internal: {}
+
+volumes:
+  metadata-data:
+  storage1-data:
+  storage2-data:
+  storage3-data:
+  storage4-data:

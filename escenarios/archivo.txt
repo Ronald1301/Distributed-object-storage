@@ -1,0 +1,27 @@
+# Ciclo de vida completo de UN fichero tuyo en el almacén.
+#
+# Uso:   python3 scripts/p16.py run escenarios/archivo.txt RUTA/AL/FICHERO
+# Ej.:   python3 scripts/p16.py run escenarios/archivo.txt ~/Desktop/foto.jpg
+#
+# $1 = el fichero que pasas · $NAME = su nombre sin carpeta
+
+echo 1) PUT: el gateway calcula el SHA-256, elige 2 nodos con HRW y guarda 2 copias
+put $1 pruebas/$NAME
+
+echo 2) HEAD y ubicación: metadatos, ranking HRW y réplicas reales
+head pruebas/$NAME
+locate pruebas/$NAME
+
+echo 3) GET: descargar y comprobar que es idéntico al original
+verify $1 pruebas/$NAME
+
+echo 4) Integridad: se corrompe una copia en disco y se vuelve a descargar
+corrupt pruebas/$NAME
+verify $1 pruebas/$NAME
+sleep 1
+events 3
+
+echo 5) LIST y DELETE
+ls pruebas/
+rm pruebas/$NAME
+head pruebas/$NAME

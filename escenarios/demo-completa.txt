@@ -1,0 +1,66 @@
+# Demo completa para la defensa, con pausas (ENTER). Sin pausas: añade --yes
+#
+# Uso:   python3 scripts/p16.py run escenarios/demo-completa.txt
+# Recomendado arrancar con tiempos cortos:
+#   REPAIR_DELAY_SECONDS=10 RECONCILE_INTERVAL_SECONDS=3 docker compose up -d --build --wait
+
+echo 1) Estado inicial
+status
+pause
+
+echo 2) PUT: distribución y replicación
+seed 12
+status
+locate demo/objeto-000.txt
+pause
+
+echo 3) Fallo de un nodo: las lecturas siguen funcionando
+!docker compose stop storage2
+get demo/objeto-001.txt
+get demo/objeto-002.txt
+get demo/objeto-003.txt
+wait storage2 DOWN
+seed 3 durante-caida/
+status
+pause
+
+echo 4) Re-replicación tras REPAIR_DELAY
+wait repaired --timeout 300
+events 8
+pause
+
+echo 5) Vuelta del nodo y reconciliación
+!docker compose start storage2
+wait storage2 HEALTHY
+wait converged
+status
+pause
+
+echo 6) Corrupción detectada al leer (read-repair)
+corrupt demo/objeto-004.txt
+get demo/objeto-004.txt
+sleep 1
+events 3
+pause
+
+echo 7) Corrupción detectada por el scrub
+corrupt demo/objeto-005.txt
+scrub
+pause
+
+echo 8) Disco perdido
+wipe storage1
+reconcile
+wait converged
+events 6
+pause
+
+echo 9) Añadir y retirar storage4
+!docker compose --profile scale up -d --wait storage4
+wait storage4 HEALTHY
+wait converged
+status
+drain storage4
+wait storage4 DECOMMISSIONED
+!docker compose --profile scale stop storage4
+status
