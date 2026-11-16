@@ -1,5 +1,26 @@
+# Python
 __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
+venv/
+
+# Sistema operativo
 .DS_Store
+Thumbs.db
+
+# Configuración local de herramientas (cada uno la suya)
+.kiro/
+.claude/
+.vscode/
+.idea/
+
+# Secretos y variables de entorno locales
+.env
+.env.*
+
+# Logs y ficheros de prueba
+*.log
+hola.txt
+*.tmp
+tmp/

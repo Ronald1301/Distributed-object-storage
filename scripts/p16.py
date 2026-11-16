@@ -157,9 +157,24 @@ def cmd_events(args: argparse.Namespace) -> None:
 
 
 # ------------------------------------------------------------------ objetos
+def missing_file_message(path: str) -> str:
+    return (f"{RED}✘ No existe el fichero '{path}'{RESET} (buscado en {os.path.abspath(path)})\n"
+            f"  Créalo primero, por ejemplo:  echo \"hola P16\" > {shlex.quote(path)}\n"
+            f"  o pasa la ruta de uno que exista (p. ej. ~/Desktop/foto.jpg)")
+
+
+def read_local(path: str) -> bytes:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except FileNotFoundError:
+        sys.exit(missing_file_message(path))
+    except IsADirectoryError:
+        sys.exit(f"{RED}✘ '{path}' es una carpeta, no un fichero{RESET}")
+
+
 def cmd_put(args: argparse.Namespace) -> None:
-    with open(args.file, "rb") as fh:
-        data = fh.read()
+    data = read_local(args.file)
     key = args.key or os.path.basename(args.file)
     status, _, body = request("PUT", obj_path(args.bucket, key), data, {})
     print(body.decode())
@@ -196,8 +211,7 @@ def _is_text(data: bytes) -> bool:
 
 def cmd_verify(args: argparse.Namespace) -> None:
     """Descarga el objeto y comprueba que es idéntico al fichero local."""
-    with open(args.file, "rb") as fh:
-        local = hashlib.sha256(fh.read()).hexdigest()
+    local = hashlib.sha256(read_local(args.file)).hexdigest()
     key = args.key or os.path.basename(args.file)
     status, headers, body = request("GET", obj_path(args.bucket, key))
     if status != 200:
@@ -383,6 +397,15 @@ def cmd_run(args: argparse.Namespace) -> None:
                          f"uso: p16.py run {args.script} ARG1 ARG2 …{RESET}")
             return shlex.quote(value) if quote else value
         return VAR_RE.sub(repl, text)
+
+    # Antes de ejecutar nada (p. ej. tumbar un nodo), comprobar que existen los ficheros
+    # locales que el guion va a subir o verificar.
+    for lineno, raw in steps:
+        tokens = shlex.split(raw.lstrip("-").strip())
+        if len(tokens) >= 2 and tokens[0] in ("put", "verify"):
+            path = expand(tokens[1], lineno, display=True)
+            if not os.path.isfile(path):
+                sys.exit(f"{missing_file_message(path)}\n  ({args.script}:{lineno}: {raw}) · no se ha ejecutado nada")
 
     parser = build_parser()
     total = sum(1 for _, raw in steps if not raw.startswith("echo"))

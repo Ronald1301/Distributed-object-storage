@@ -138,6 +138,10 @@ python3 scripts/p16.py run escenarios/demo-completa.txt
 Al final se muestra un resumen (`■ … 16/16 acciones correctas`). Si una acción falla, el
 guion se detiene y dice en qué línea.
 
+> **El fichero que pasas tiene que existir.** La ruta es relativa a la carpeta donde estás (o
+> absoluta, como `~/Desktop/foto.jpg`). Si no existe, el guion avisa y **no ejecuta nada**. Para
+> crear uno de prueba en la carpeta del proyecto: `echo "hola P16" > hola.txt`.
+
 ### Formato de un guion
 
 | Línea | Significado |
