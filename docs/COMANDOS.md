@@ -240,7 +240,7 @@ Documentación interactiva (Swagger): <http://localhost:8080/docs>
 | Comando | Qué hace |
 |---|---|
 | `python3 tests/e2e_test.py` | 21 comprobaciones automáticas contra el clúster real (mejor con tiempos cortos) |
-| `docker compose exec gateway python -m unittest discover -s tests -t .` | Tests unitarios de ubicación e identificadores |
+| `docker compose exec gateway python -m unittest discover -s tests -t .` | Tests unitarios: ubicación, identificadores y convergencia del reconciliador (dobles en memoria). En local: `cd gateway && python3 -m unittest discover -s tests -t .` |
 | `docker compose exec gateway python -m tools.simulate_placement` | Compara `hash % N`, anillo consistente y HRW al pasar de 3 a 4 nodos |
 | `FAST=1 ./scripts/demo.sh` | Demo guiada completa (arranca el sistema; ENTER para avanzar) |
 | `python3 scripts/p16.py run escenarios/demo-completa.txt` | La misma demo como guion |

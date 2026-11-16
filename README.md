@@ -238,8 +238,9 @@ FAST=1 ./scripts/demo.sh           # demo completa paso a paso (ENTER para avanz
 REPAIR_DELAY_SECONDS=10 RECONCILE_INTERVAL_SECONDS=3 docker compose up -d --build --wait
 python3 tests/e2e_test.py
 
-# tests unitarios de ubicación/ids (dentro del contenedor, o en local desde gateway/)
+# tests unitarios: ubicación/ids y convergencia del reconciliador con dobles en memoria
 docker compose exec gateway python -m unittest discover -s tests -t .
+# (o en local, sin Docker: cd gateway && pip install -r requirements.txt && python3 -m unittest discover -s tests -t .)
 
 # comparar hash % N, anillo consistente y HRW al pasar de 3 a 4 nodos
 docker compose exec gateway python -m tools.simulate_placement
