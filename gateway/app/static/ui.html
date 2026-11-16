@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P16 · Almacén en vivo</title>
+<style>
+:root {
+  --bg: #eef1f5; --panel: #ffffff; --soft: #f6f7fa; --ink: #172033; --muted: #64708a; --line: #d6dbe4;
+  --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --info: #2563eb; --rec: #0891b2; --drain: #9333ea;
+  --put: #2563eb; --get: #059669; --del: #dc2626; --head: #64748b; --list: #7c3aed; --meta: #334155;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0e1117; --panel: #161b24; --soft: #1d2330; --ink: #e6e9ef; --muted: #98a2b5; --line: #2b3242; --meta: #475569; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button, select { font: inherit; }
+
+/* ---------- cabecera ---------- */
+.top { position: sticky; top: 0; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+  padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo { width: 38px; height: 38px; border-radius: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 6px; background: var(--ink); }
+.logo i { border-radius: 2px; background: var(--panel); opacity: .9; }
+.logo i:nth-child(2) { background: #60a5fa; } .logo i:nth-child(3) { background: #34d399; }
+.brand h1 { margin: 0; font-size: 17px; }
+.brand p { margin: 0; font-size: 12.5px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.chip { padding: 5px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--soft); font: 600 11.5px/1 var(--mono); white-space: nowrap; }
+.controls { display: flex; align-items: center; gap: 12px; font-size: 12.5px; color: var(--muted); }
+.controls select { padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.controls label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.conn { font-weight: 700; white-space: nowrap; }
+.conn.on { color: var(--ok); } .conn.off { color: var(--bad); }
+
+/* ---------- escenario ---------- */
+.stage { position: relative; padding: 18px 20px 4px; }
+.wires { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 0; overflow: visible; }
+.wire { fill: none; stroke: var(--line); stroke-width: 2; }
+.wire.HEALTHY { stroke: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.wire.SUSPECT { stroke: var(--warn); stroke-dasharray: 6 5; }
+.wire.DOWN { stroke: var(--bad); stroke-dasharray: 3 7; opacity: .6; }
+.wire.RECOVERING { stroke: var(--rec); stroke-dasharray: 8 4; }
+.wire.off { opacity: .25; }
+.fx { position: absolute; inset: 0; pointer-events: none; z-index: 20; }
+
+.plane { position: relative; z-index: 1; margin-bottom: 26px; padding: 24px 14px 14px; border: 1.5px dashed var(--line); border-radius: 14px; }
+.plane-label { position: absolute; top: -11px; left: 14px; margin: 0; padding: 0 8px; background: var(--bg);
+  font: 800 12px/22px system-ui; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.plane-label span { margin-left: 8px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+
+.app-grid { display: grid; grid-template-columns: 1.25fr 1.1fr .95fr; gap: 56px; }
+.actor { position: relative; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 1px 2px rgba(16,24,40,.06); }
+.actor-head { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
+.actor-head small { display: block; font-weight: 500; font-size: 12px; color: var(--muted); }
+.icon { flex: none; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; font-size: 18px; background: var(--soft); border: 1px solid var(--line); }
+.btn { margin-left: auto; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--soft); color: var(--ink); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.btn:hover { border-color: var(--info); }
+
+.requests { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 196px; overflow: hidden; }
+.requests li { padding: 6px 8px; border-radius: 8px; background: var(--soft); border: 1px solid var(--line); animation: slide-in .35s ease-out; }
+.requests .row { display: flex; align-items: center; gap: 8px; }
+.requests .key { flex: 1; min-width: 0; font: 600 12.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.requests .detail { margin-top: 2px; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op { flex: none; width: 54px; text-align: center; padding: 2px 0; border-radius: 5px; color: #fff; font: 800 11px/1.4 var(--mono); }
+.op.PUT { background: var(--put); } .op.GET { background: var(--get); } .op.DELETE { background: var(--del); }
+.op.HEAD { background: var(--head); } .op.LIST { background: var(--list); }
+.code { font: 800 12px var(--mono); } .code.ok { color: var(--ok); } .code.bad { color: var(--bad); }
+.empty { color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+
+.modules { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 10px; }
+.module { padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--soft); font-size: 12px; font-weight: 600; transition: background .3s, color .3s, border-color .3s; }
+.module.on { background: var(--info); border-color: var(--info); color: #fff; }
+.gw-note { min-height: 38px; padding: 8px 10px; border-radius: 8px; background: var(--soft); font: 12px/1.45 var(--mono); color: var(--muted); }
+.gw-note.ok { color: var(--ok); } .gw-note.bad { color: var(--bad); }
+
+.kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.kpi { padding: 8px 10px; border-radius: 8px; background: var(--soft); border: 1px solid var(--line); }
+.kpi b { display: block; font: 800 20px/1.1 var(--mono); }
+.kpi span { font-size: 11.5px; color: var(--muted); }
+.db-note { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+
+/* ---------- nodos (estanterías) ---------- */
+.nodes { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+.node { position: relative; padding: 10px 12px; border: 2px solid var(--line); border-radius: 12px; background: var(--panel); transition: border-color .3s, opacity .4s; }
+.node.joined { animation: node-in .8s ease-out; }
+.node.h-HEALTHY { border-color: color-mix(in srgb, var(--ok) 50%, var(--line)); }
+.node.h-SUSPECT { border-color: var(--warn); animation: pulse-warn 1.1s infinite; }
+.node.h-DOWN { border-color: var(--bad); }
+.node.h-RECOVERING { border-color: var(--rec); }
+.node.m-DRAINING { border-style: dashed; }
+.node.m-DECOMMISSIONED { opacity: .45; }
+.node.shake { animation: shake .5s; }
+.node-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.node-name { display: flex; align-items: center; gap: 8px; font: 800 15px var(--mono); }
+.disk { width: 22px; height: 22px; border-radius: 6px; background: var(--soft); border: 1px solid var(--line); display: grid; place-items: center; font-size: 12px; }
+.badge { padding: 4px 8px; border-radius: 999px; color: #fff; background: var(--muted); font: 800 11px/1 system-ui; letter-spacing: .03em; }
+.badge.HEALTHY { background: var(--ok); } .badge.SUSPECT { background: var(--warn); }
+.badge.DOWN { background: var(--bad); } .badge.RECOVERING { background: var(--rec); }
+.node-meta { margin: 3px 0 8px; font-size: 12px; color: var(--muted); }
+.rack { position: relative; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; min-height: 102px; padding: 8px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--soft); overflow: hidden; }
+.rack.scan::after { content: ""; position: absolute; top: 0; bottom: 0; width: 40px; left: -40px;
+  background: linear-gradient(90deg, transparent, rgba(37,99,235,.35), transparent); animation: scan 1.2s ease-in-out; }
+.rack-empty { margin: auto; font-size: 12px; color: var(--muted); }
+.node-foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.meter { position: relative; flex: 1; height: 8px; border-radius: 99px; background: var(--soft); border: 1px solid var(--line); }
+.meter i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; background: var(--info); transition: width .6s; }
+.meter b { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink); transition: left .6s; }
+.node-overlay { position: absolute; inset: 44px 10px 34px; display: none; place-items: center; text-align: center; border-radius: 8px;
+  font: 800 13px/1.35 system-ui; letter-spacing: .05em; color: var(--bad);
+  background: repeating-linear-gradient(135deg, rgba(220,38,38,.10) 0 10px, rgba(220,38,38,.20) 10px 20px); }
+.node.h-DOWN .node-overlay, .node.m-DECOMMISSIONED .node-overlay { display: grid; }
+.node.m-DECOMMISSIONED .node-overlay { color: var(--muted); background: repeating-linear-gradient(135deg, rgba(100,112,138,.08) 0 10px, rgba(100,112,138,.16) 10px 20px); }
+.node.h-DOWN .box { filter: grayscale(1); opacity: .45; }
+
+/* ---------- cajas (réplicas) ---------- */
+.box { position: relative; width: 88px; height: 36px; padding: 4px 6px; border-radius: 6px; cursor: pointer;
+  display: flex; flex-direction: column; justify-content: center; overflow: hidden;
+  background: hsl(var(--h) 62% 50%); color: #fff; box-shadow: inset 0 -3px 0 rgba(0,0,0,.2);
+  font: 700 11px/1.15 var(--mono); transition: transform .15s, opacity .25s, filter .3s, background .3s; }
+.box span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.box em { font-style: normal; font-weight: 600; font-size: 10px; opacity: .85; }
+.box.extra::after { content: "↗"; position: absolute; top: 1px; right: 4px; font-size: 11px; }
+.box.st-CORRUPT { background: repeating-linear-gradient(45deg, #dc2626 0 6px, #991b1b 6px 12px); }
+.box.st-MISSING { background: transparent; border: 2px dashed hsl(var(--h) 60% 50%); color: var(--bad); box-shadow: none; }
+.box.slot { background: transparent; border: 2px dotted hsl(var(--h) 60% 52%); color: hsl(var(--h) 55% 42%); box-shadow: none; }
+.box.ghost { background: repeating-linear-gradient(45deg, #94a3b8 0 5px, #7c8aa0 5px 10px); color: #fff; opacity: .75; }
+.box.ghost span { text-decoration: line-through; }
+.nodes.focus .box:not(.hl) { opacity: .18; }
+.box.hl { transform: translateY(-2px); outline: 3px solid var(--ink); outline-offset: 1px; }
+.box.enter { animation: pop .55s cubic-bezier(.2,1.6,.4,1); }
+.box.leave { animation: vanish .5s forwards; pointer-events: none; }
+.box.flash-bad { animation: flash-bad 1.4s; }
+.box.flash-ok { animation: flash-ok 1s; }
+.compact .box { width: 24px; height: 24px; padding: 0; }
+.compact .box span, .compact .box em, .compact .box.extra::after { display: none; }
+
+/* ---------- efectos ---------- */
+.packet { position: absolute; left: 0; top: 0; translate: -50% -50%; padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+  background: var(--info); color: #fff; font: 800 11.5px/1.35 var(--mono); box-shadow: 0 6px 16px rgba(0,0,0,.22); }
+.packet.op-PUT { background: var(--put); } .packet.op-GET { background: var(--get); } .packet.op-DELETE { background: var(--del); }
+.packet.op-HEAD { background: var(--head); } .packet.op-LIST { background: var(--list); }
+.packet.meta { background: var(--meta); }
+.packet.data { border-radius: 6px; background: hsl(var(--h) 62% 48%); outline: 2px solid rgba(255,255,255,.7); }
+.packet.ok { background: var(--ok); } .packet.bad { background: var(--bad); }
+.packet.beat { width: 9px; height: 9px; padding: 0; background: var(--ok); opacity: .55; box-shadow: none; }
+.packet.beat.lost { background: var(--bad); }
+.bubble { position: absolute; translate: -50% -100%; padding: 4px 9px; border-radius: 8px; white-space: nowrap;
+  border: 1.5px solid var(--line); background: var(--panel); color: var(--ink); font: 700 12px system-ui;
+  box-shadow: 0 6px 16px rgba(0,0,0,.14); animation: bubble 2.4s forwards; }
+.bubble.ok { border-color: var(--ok); color: var(--ok); }
+.bubble.bad { border-color: var(--bad); color: var(--bad); }
+.bubble.warn { border-color: var(--warn); color: var(--warn); }
+.miss { position: absolute; translate: -50% -50%; color: var(--bad); font: 900 15px system-ui; animation: bubble 1s forwards; }
+
+/* ---------- paneles inferiores ---------- */
+.bottom { display: grid; grid-template-columns: 1.05fr 1.35fr 1.15fr; gap: 16px; padding: 0 20px 20px; }
+.panel { min-height: 270px; max-height: 440px; overflow: auto; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.panel h3 { margin: 0 0 10px; font-size: 12.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.states { display: flex; flex-direction: column; gap: 6px; }
+.state { display: grid; grid-template-columns: 12px 38px 1fr; align-items: center; gap: 8px; font-size: 12.5px; }
+.state i { width: 12px; height: 12px; border-radius: 50%; }
+.state b { font: 800 16px var(--mono); text-align: right; }
+.state span { color: var(--muted); }
+.state.zero b { color: var(--muted); font-weight: 600; }
+.legend { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.legend .box { width: 70px; height: 24px; cursor: default; font-size: 10.5px; }
+.events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.events li { display: grid; grid-template-columns: 58px 150px 1fr; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; animation: slide-in .35s; }
+.events li:nth-child(odd) { background: var(--soft); }
+.events time { font: 11.5px var(--mono); color: var(--muted); }
+.etype { font: 700 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.etype.bad { color: var(--bad); } .etype.warn { color: var(--warn); } .etype.ok { color: var(--ok); } .etype.info { color: var(--info); }
+.inspect-empty { color: var(--muted); font-size: 13px; line-height: 1.55; }
+.kv { display: grid; grid-template-columns: 92px 1fr; gap: 3px 10px; font-size: 12.5px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; }
+.rank-row { display: grid; grid-template-columns: 76px 1fr 70px; gap: 8px; align-items: center; font: 12px var(--mono); }
+.rank-bar { height: 10px; border-radius: 99px; background: var(--soft); border: 1px solid var(--line); overflow: hidden; }
+.rank-bar i { display: block; height: 100%; background: var(--muted); }
+.rank-row.want .rank-bar i { background: var(--info); }
+.tag { justify-self: start; padding: 2px 6px; border-radius: 5px; font: 700 10.5px system-ui; background: var(--soft); border: 1px solid var(--line); color: var(--muted); }
+.tag.want { background: var(--info); border-color: var(--info); color: #fff; }
+.tag.OK { color: var(--ok); } .tag.CORRUPT, .tag.MISSING { color: var(--bad); }
+.hint { margin-top: 10px; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.actions { display: flex; gap: 8px; margin-top: 12px; }
+
+.toasts { position: fixed; right: 16px; top: 72px; z-index: 40; width: 360px; display: flex; flex-direction: column; gap: 8px; }
+.toast { padding: 10px 12px; border-left: 4px solid var(--info); border-radius: 8px; background: var(--panel); box-shadow: 0 10px 28px rgba(0,0,0,.18); font-size: 13px; animation: toast-in .3s ease-out; }
+.toast.ok { border-color: var(--ok); } .toast.bad { border-color: var(--bad); } .toast.warn { border-color: var(--warn); }
+.toast.out { animation: toast-out .4s forwards; }
+
+@keyframes pop { 0% { transform: scale(0); } 100% { transform: scale(1); } }
+@keyframes vanish { to { transform: scale(0); opacity: 0; } }
+@keyframes flash-bad { 0%, 40% { box-shadow: 0 0 0 4px var(--bad); } 100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes flash-ok { 0% { box-shadow: 0 0 0 4px var(--ok); } 100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes bubble { 0% { opacity: 0; margin-top: 6px; } 12% { opacity: 1; margin-top: 0; } 80% { opacity: 1; } 100% { opacity: 0; margin-top: -8px; } }
+@keyframes slide-in { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes toast-in { from { opacity: 0; transform: translateX(30px); } }
+@keyframes toast-out { to { opacity: 0; transform: translateX(30px); } }
+@keyframes pulse-warn { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--warn) 25%, transparent); } }
+@keyframes shake { 20%, 60% { transform: translateX(-5px); } 40%, 80% { transform: translateX(5px); } }
+@keyframes node-in { from { opacity: 0; transform: scale(.9); } }
+@keyframes scan { to { left: 100%; } }
+
+@media (max-width: 1100px) {
+  .app-grid, .bottom { grid-template-columns: 1fr; }
+  .app-grid { gap: 18px; }
+  .chips { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="logo"><i></i><i></i><i></i><i></i></div>
+    <div>
+      <h1>P16 · Almacén de objetos distribuido</h1>
+      <p>contrato simple (clave + bytes + metadatos) sobre un plano de datos distribuido</p>
+    </div>
+  </div>
+  <div class="chips" id="contract"></div>
+  <div class="controls">
+    <label title="Duración de las animaciones">Velocidad
+      <select id="speed"><option value="1">normal</option><option value="2">lenta</option><option value="3.5">muy lenta</option></select>
+    </label>
+    <label title="Muestra los sondeos /health del detector de fallos"><input type="checkbox" id="beats" checked> sondeos</label>
+    <span class="conn" id="conn">conectando…</span>
+  </div>
+</header>
+
+<main class="stage" id="stage">
+  <svg class="wires" id="wires"></svg>
+
+  <section class="plane">
+    <h2 class="plane-label">Plano de aplicación <span>el cliente sólo conoce clave + bytes + metadatos</span></h2>
+    <div class="app-grid">
+      <article class="actor" id="client">
+        <div class="actor-head" id="client-core">
+          <div class="icon">⌨︎</div>
+          <div>Cliente<small>curl · scripts/p16.py · este panel</small></div>
+          <label class="btn" title="Sube archivos con PUT (clave ui/NOMBRE)">Subir archivo<input type="file" id="upload" multiple hidden></label>
+        </div>
+        <ul class="requests" id="requests"></ul>
+        <div class="empty" id="requests-empty">Aún no hay peticiones. Prueba en la terminal:<br>
+          <code>curl -X PUT --data-binary @hola.txt localhost:8080/objects/hola.txt</code></div>
+      </article>
+
+      <article class="actor" id="gateway">
+        <div class="actor-head">
+          <div class="icon" id="gw-core">⇄</div>
+          <div>Gateway <small>:8080 · API + coordinador del plano de datos</small></div>
+        </div>
+        <div class="modules">
+          <span class="module" id="m-api" title="Recibe PUT / GET / HEAD / DELETE / LIST">API</span>
+          <span class="module" id="m-hrw" title="Rendezvous hashing: elige los 2 nodos de cada objeto">Ubicación HRW</span>
+          <span class="module" id="m-fd" title="Sondea /health de cada nodo cada 2 s">Detector de fallos</span>
+          <span class="module" id="m-rec" title="Repara, re-replica y reequilibra">Reconciliador</span>
+          <span class="module" id="m-scrub" title="Verifica los SHA-256 de todas las réplicas">Scrub</span>
+        </div>
+        <div class="gw-note" id="gw-note">esperando peticiones…</div>
+      </article>
+
+      <article class="actor" id="db">
+        <div class="actor-head" id="db-core">
+          <div class="icon">⛁</div>
+          <div>PostgreSQL <small>metadatos · fuente de verdad</small></div>
+        </div>
+        <div class="kpis" id="kpis"></div>
+        <div class="db-note">qué objetos existen, su versión (checksum) y dónde está cada copia</div>
+      </article>
+    </div>
+  </section>
+
+  <section class="plane">
+    <h2 class="plane-label">Plano de datos <span>cada caja es una réplica · mismo color = mismo objeto · pasa el ratón o pulsa una caja (Esc para soltar)</span></h2>
+    <div class="nodes" id="nodes"></div>
+  </section>
+
+  <div class="fx" id="fx"></div>
+</main>
+
+<section class="bottom">
+  <article class="panel">
+    <h3>Estado de los objetos</h3>
+    <div class="states" id="states"></div>
+    <div class="legend">
+      <div class="box" style="--h:210"><span>foto.jpg</span></div><div>réplica válida (mismo color = mismo objeto)</div>
+      <div class="box extra" style="--h:150"><span>a.txt</span></div><div>copia fuera de su sitio deseado (se moverá)</div>
+      <div class="box slot" style="--h:30"><span>↓ b.txt</span></div><div>hueco: aquí debería haber una copia (HRW)</div>
+      <div class="box st-CORRUPT" style="--h:0"><span>⚠ c.txt</span></div><div>copia corrupta (SHA-256 no coincide)</div>
+      <div class="box st-MISSING" style="--h:280"><span>✗ d.txt</span></div><div>copia que falta en el disco</div>
+      <div class="box ghost"><span>e.txt</span></div><div>pendiente de borrado físico</div>
+    </div>
+  </article>
+  <article class="panel">
+    <h3>Eventos del clúster</h3>
+    <ol class="events" id="events"></ol>
+  </article>
+  <article class="panel" id="inspector">
+    <h3>Objeto seleccionado</h3>
+    <div id="inspect" class="inspect-empty">
+      Pulsa una caja para ver el objeto: su identificador estable, su versión, el <b>ranking HRW</b>
+      (dónde <i>debería</i> estar) y dónde están <i>realmente</i> sus réplicas.
+    </div>
+  </article>
+</section>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+"use strict";
+const $ = (sel, el = document) => el.querySelector(sel);
+const stage = $("#stage"), fx = $("#fx"), nodesEl = $("#nodes");
+const S = { seq: -1, boot: null, map: null, speed: 1, beats: true, selected: null, firstRender: true,
+            busyUntil: 0, lastRefresh: 0, config: null, copyBacklog: 0 };
+
+// ------------------------------------------------------------ utilidades
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function hueOf(id) { let h = 2166136261; for (const c of String(id)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0) % 360; }
+function short(key, n = 11) {
+  if (!key) return "—";
+  let b = key.split("/").filter(Boolean).pop() || key;
+  if (b.length > n) b = b.replace(/\.[^.]{1,5}$/, "");   // sin extensión
+  return b.length > n ? "…" + b.slice(-(n - 1)) : b;       // se conserva el final (lo que distingue)
+}
+function fmtBytes(b) { if (b == null) return "—"; if (b < 1024) return b + " B"; if (b < 1048576) return (b / 1024).toFixed(1) + " KB"; return (b / 1048576).toFixed(1) + " MB"; }
+function objPath(bucket, key) { return `/buckets/${encodeURIComponent(bucket)}/objects/${key.split("/").map(encodeURIComponent).join("/")}`; }
+const wait = (ms) => new Promise((r) => setTimeout(r, ms * S.speed));
+function rel(el) { const r = el.getBoundingClientRect(), s = stage.getBoundingClientRect(); return { x: r.left - s.left, y: r.top - s.top, w: r.width, h: r.height }; }
+function center(el) { const r = rel(el); return { x: r.x + r.w / 2, y: r.y + r.h / 2 }; }
+const clientEl = () => $("#client-core .icon"), gwEl = () => $("#gw-core"), dbEl = () => $("#db-core .icon");
+const nodeCard = (id) => document.getElementById("node-" + id);
+const nodeHead = (id) => { const n = nodeCard(id); return n ? $(".node-head", n) : null; };
+const boxOf = (objId, nodeId) => document.querySelector(`.box[data-k="${CSS.escape(nodeId + "|" + objId)}"]`);
+
+// ------------------------------------------------------------ efectos
+let flying = 0;
+function fly(from, to, { label = "", cls = "", hue = null, dur = 650 } = {}) {
+  if (!from || !to || flying > 45) return Promise.resolve();
+  flying++;
+  const a = center(from), b = center(to);
+  const p = document.createElement("div");
+  p.className = "packet " + cls;
+  p.textContent = label;
+  if (hue !== null) p.style.setProperty("--h", hue);
+  fx.appendChild(p);
+  const anim = p.animate([
+    { transform: `translate(${a.x}px, ${a.y}px) scale(.4)`, opacity: 0 },
+    { transform: `translate(${a.x}px, ${a.y}px) scale(1)`, opacity: 1, offset: .12 },
+    { transform: `translate(${b.x}px, ${b.y}px) scale(1)`, opacity: 1, offset: .88 },
+    { transform: `translate(${b.x}px, ${b.y}px) scale(.5)`, opacity: 0 },
+  ], { duration: dur * S.speed, easing: "cubic-bezier(.45,.05,.35,1)" });
+  return anim.finished.catch(() => {}).then(() => { p.remove(); flying--; });
+}
+function bubble(el, text, kind = "") {
+  if (!el) return;
+  const r = rel(el);
+  const b = document.createElement("div");
+  b.className = "bubble " + kind;
+  b.textContent = text;
+  b.style.left = r.x + r.w / 2 + "px";
+  b.style.top = r.y - 4 + "px";
+  b.style.animationDuration = 2.4 * S.speed + "s";
+  fx.appendChild(b);
+  setTimeout(() => b.remove(), 2500 * S.speed);
+}
+const mark = (nodeId, text, kind) => bubble(nodeHead(nodeId), text, kind);
+function restartClass(el, cls, ms = 1400) { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); setTimeout(() => el.classList.remove(cls), ms); }
+const flashBox = (objId, nodeId, cls) => restartClass(boxOf(objId, nodeId), cls);
+function blink(id) { const el = document.getElementById(id); if (!el) return; el.classList.add("on"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), 1300 * S.speed); }
+function gwNote(text, kind = "") { const n = $("#gw-note"); n.textContent = text; n.className = "gw-note " + kind; }
+function toast(text, kind = "") {
+  const box = $("#toasts");
+  const t = document.createElement("div");
+  t.className = "toast " + kind;
+  t.textContent = text;
+  box.prepend(t);
+  while (box.children.length > 5) box.lastChild.remove();
+  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 400); }, 5200);
+}
+function hold(ms) { S.busyUntil = Math.max(S.busyUntil, Date.now() + ms * S.speed); }
+
+// ------------------------------------------------------------ foto del estado
+let refreshTimer = null, refreshing = false;
+function refreshSoon(ms = 0) { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshMap, ms); }
+async function refreshMap() {
+  if (refreshing) { refreshSoon(250); return; }
+  refreshing = true;
+  try {
+    const r = await fetch("/cluster/map", { cache: "no-store" });
+    renderMap(await r.json());
+    S.lastRefresh = Date.now();
+  } catch (e) { /* sin conexión: lo indica el feed */ }
+  finally { refreshing = false; }
+}
+setInterval(() => {
+  if (Date.now() < S.busyUntil && Date.now() - S.lastRefresh < 4000) return;  // no adelantarse a una animación
+  refreshMap();
+}, 1500);
+
+function renderMap(m) {
+  S.map = m;
+  renderKpis(m);
+  renderStates(m);
+  renderNodes(m);
+  requestAnimationFrame(drawWires);
+  if (S.selected) refreshInspector();
+  S.firstRender = false;
+}
+
+function renderKpis(m) {
+  const replicas = m.nodes.reduce((a, n) => a + n.replicas, 0);
+  const buckets = new Set(m.objects.map((o) => o.bucket)).size;
+  $("#kpis").innerHTML = [
+    [m.total_objects, "objetos"], [replicas, "réplicas válidas"],
+    [m.pending_deletions.length, "borrados pendientes"], [buckets, "buckets"],
+  ].map(([v, l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join("");
+}
+
+const STATE_INFO = [
+  ["ok", "var(--ok)", "en su sitio: 2 copias donde dice HRW"],
+  ["misplaced", "var(--info)", "completo, pero con copias por mover"],
+  ["degraded", "var(--warn)", "una copia inaccesible (periodo de gracia)"],
+  ["under_replicated", "#ea580c", "copia perdida: re-replicando"],
+  ["unavailable", "var(--bad)", "ninguna copia accesible"],
+];
+function renderStates(m) {
+  $("#states").innerHTML = STATE_INFO.map(([k, color, text]) => {
+    const v = m.states[k] || 0;
+    return `<div class="state ${v ? "" : "zero"}"><i style="background:${color}"></i><b>${v}</b><span>${text}</span></div>`;
+  }).join("") + (m.truncated ? `<div class="hint">Mostrando los ${m.objects.length} objetos más recientes de ${m.total_objects}.</div>` : "");
+}
+
+// ------------------------------------------------------------ estanterías
+const boxEls = new Map();
+function renderNodes(m) {
+  const specs = new Map(m.nodes.map((n) => [n.node_id, []]));
+  for (const o of m.objects) {
+    const hue = hueOf(o.id);
+    const holders = new Set(o.replicas.map((r) => r.node_id));
+    for (const r of o.replicas) {
+      if (!specs.has(r.node_id)) continue;
+      specs.get(r.node_id).push({ k: o.id, o, hue, status: r.blob_id === o.blob_id ? r.status : "MISSING",
+                                   extra: !o.desired.includes(r.node_id), sort: `${o.bucket}/${o.key}` });
+    }
+    for (const d of o.desired) {
+      if (!holders.has(d) && specs.has(d)) specs.get(d).push({ k: o.id, o, hue, slot: true, sort: `${o.bucket}/${o.key}` });
+    }
+  }
+  for (const d of m.pending_deletions) {
+    if (specs.has(d.node_id)) specs.get(d.node_id).push({ k: "del:" + d.blob_id, ghost: true, label: d.label, reason: d.reason, sort: "￿" + (d.label || "") });
+  }
+  const totalReal = m.nodes.reduce((a, n) => a + n.replicas, 0) || 1;
+  const totalWant = m.nodes.reduce((a, n) => a + n.desired_replicas, 0) || 1;
+  const seenNodes = new Set();
+  for (const n of m.nodes) {
+    seenNodes.add(n.node_id);
+    const card = ensureCard(n.node_id);
+    card.className = `node h-${n.health} m-${n.membership}` + (card.classList.contains("joined") ? " joined" : "");
+    const badge = $(".badge", card);
+    badge.className = "badge " + n.health;
+    badge.textContent = n.membership === "DECOMMISSIONED" ? "RETIRADO" : n.health;
+    $(".node-meta", card).textContent = `${n.membership} · peso ${n.weight} · ${fmtBytes(n.bytes)} en disco`;
+    const realPct = 100 * n.replicas / totalReal, wantPct = 100 * n.desired_replicas / totalWant;
+    $(".meter i", card).style.width = realPct + "%";
+    $(".meter b", card).style.left = `calc(${wantPct}% - 1px)`;
+    $(".share", card).textContent = `${n.replicas} réplicas · ${realPct.toFixed(0)}% (deseado ${wantPct.toFixed(0)}%)`;
+    $(".node-overlay", card).innerHTML = n.membership === "DECOMMISSIONED" ? "RETIRADO DEL CLÚSTER"
+      : n.health === "DOWN" ? `CAÍDO · NO RESPONDE<br><small>${n.down_since ? "desde " + new Date(n.down_since).toLocaleTimeString() : ""}</small>` : "";
+    const list = (specs.get(n.node_id) || []).sort((a, b) => a.sort.localeCompare(b.sort) || a.k.localeCompare(b.k));
+    renderRack(n.node_id, $(".rack", card), list);
+  }
+  for (const card of [...nodesEl.children]) if (!seenNodes.has(card.id.slice(5))) card.remove();
+}
+
+function ensureCard(id) {
+  let card = nodeCard(id);
+  if (card) return card;
+  card = document.createElement("article");
+  card.id = "node-" + id;
+  card.innerHTML = `
+    <header class="node-head"><span class="node-name"><span class="disk">▤</span>${esc(id)}</span><span class="badge"></span></header>
+    <div class="node-meta"></div>
+    <div class="rack"></div>
+    <footer class="node-foot"><div class="meter" title="barra: réplicas reales · marca: reparto deseado por HRW"><i></i><b></b></div><span class="share"></span></footer>
+    <div class="node-overlay"></div>`;
+  nodesEl.appendChild(card);
+  if (!S.firstRender) { card.classList.add("joined"); setTimeout(() => card.classList.remove("joined"), 900); }
+  return card;
+}
+
+function renderRack(nodeId, rack, list) {
+  rack.classList.toggle("compact", list.length > 36);
+  const seen = new Set();
+  let pos = 0;
+  for (const sp of list) {
+    const key = nodeId + "|" + sp.k;
+    seen.add(key);
+    let el = boxEls.get(key);
+    if (!el) {
+      el = document.createElement("div");
+      el.dataset.k = key;
+      boxEls.set(key, el);
+      if (!S.firstRender) { el.classList.add("enter"); setTimeout(() => el.classList.remove("enter"), 600); }
+    }
+    paintBox(el, sp);
+    const live = [...rack.children].filter((c) => c.classList.contains("box") && !c.classList.contains("leave"));
+    if (live[pos] !== el) rack.insertBefore(el, live[pos] || null);
+    pos++;
+  }
+  for (const [key, el] of boxEls) {
+    if (key.startsWith(nodeId + "|") && !seen.has(key)) {
+      boxEls.delete(key);
+      el.classList.add("leave");
+      setTimeout(() => el.remove(), 520);
+    }
+  }
+  let empty = $(".rack-empty", rack);
+  if (!list.length && !empty) { empty = document.createElement("div"); empty.className = "rack-empty"; empty.textContent = "vacío"; rack.appendChild(empty); }
+  if (list.length && empty) empty.remove();
+}
+
+function paintBox(el, sp) {
+  const keep = ["enter", "hl", "flash-bad", "flash-ok"].filter((c) => el.classList.contains(c));
+  const cls = ["box"];
+  let label, sub = "", title;
+  if (sp.ghost) {
+    cls.push("ghost");
+    label = short(sp.label || "versión antigua");
+    title = `${sp.label || "blob"}\npendiente de borrado físico (${sp.reason})`;
+    el.dataset.obj = "";
+  } else {
+    const o = sp.o;
+    el.dataset.obj = o.id;
+    el.style.setProperty("--h", sp.hue);
+    title = `${o.bucket}/${o.key}\nversión ${o.version} · ${fmtBytes(o.size)} · estado del objeto: ${o.state}`;
+    if (sp.slot) { cls.push("slot"); label = "↓ " + short(o.key, 9); title += "\nHUECO: HRW dice que aquí debería haber una copia"; }
+    else {
+      cls.push("st-" + sp.status);
+      if (sp.extra) { cls.push("extra"); title += "\ncopia fuera de su ubicación deseada: se moverá"; }
+      label = (sp.status === "CORRUPT" ? "⚠ " : sp.status === "MISSING" ? "✗ " : "") + short(o.key);
+      sub = sp.status === "OK" ? "v" + o.version : sp.status.toLowerCase();
+      title += `\nréplica: ${sp.status}`;
+    }
+  }
+  el.className = cls.concat(keep).join(" ");
+  const html = `<span>${esc(label)}</span>${sub ? `<em>${esc(sub)}</em>` : ""}`;
+  if (el._html !== html) { el.innerHTML = html; el._html = html; }
+  el.title = title;
+}
+
+// resaltar las réplicas de un objeto en todos los nodos
+nodesEl.addEventListener("mouseover", (e) => {
+  const box = e.target.closest(".box");
+  highlight(box && box.dataset.obj ? box.dataset.obj : S.selected && S.selected.id);
+});
+nodesEl.addEventListener("mouseleave", () => highlight(S.selected && S.selected.id));
+function clearSelection() {
+  S.selected = null;
+  highlight(null);
+  $("#inspect").className = "inspect-empty";
+  $("#inspect").innerHTML = "Pulsa una caja para ver el objeto: su identificador estable, su versión, el <b>ranking HRW</b> (dónde <i>debería</i> estar) y dónde están <i>realmente</i> sus réplicas.";
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") clearSelection(); });
+nodesEl.addEventListener("click", (e) => {
+  const box = e.target.closest(".box");
+  if (!box) { if (S.selected) clearSelection(); return; }
+  if (!box.dataset.obj || !S.map) return;
+  const o = S.map.objects.find((x) => x.id === box.dataset.obj);
+  if (o) { S.selected = { id: o.id, bucket: o.bucket, key: o.key }; refreshInspector(); highlight(o.id); }
+});
+function highlight(objId) {
+  nodesEl.classList.toggle("focus", !!objId);
+  for (const el of nodesEl.querySelectorAll(".box.hl")) el.classList.remove("hl");
+  if (objId) for (const el of nodesEl.querySelectorAll(`.box[data-obj="${CSS.escape(objId)}"]`)) el.classList.add("hl");
+}
+
+// ------------------------------------------------------------ cables
+function drawWires() {
+  const svg = $("#wires");
+  const w = stage.scrollWidth, h = stage.scrollHeight;
+  svg.setAttribute("width", w); svg.setAttribute("height", h); svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  const c = rel($("#client")), g = rel($("#gateway")), d = rel($("#db"));
+  const paths = [];
+  const line = (x1, y1, x2, y2, cls = "") => paths.push(`<path class="wire ${cls}" d="M${x1},${y1} L${x2},${y2}"/>`);
+  const stacked = g.y > c.y + c.h;  // pantalla estrecha: cliente, gateway y BD apilados
+  if (stacked) {
+    line(c.x + c.w / 2, c.y + c.h, g.x + g.w / 2, g.y);
+    line(g.x + g.w / 2, g.y + g.h, d.x + d.w / 2, d.y);
+  } else {
+    line(c.x + c.w, c.y + 34, g.x, g.y + 34);
+    line(g.x + g.w, g.y + 34, d.x, d.y + 34);
+  }
+  if (S.map && !stacked) for (const n of S.map.nodes) {
+    const card = nodeCard(n.node_id);
+    if (!card) continue;
+    const t = rel(card), x1 = g.x + g.w / 2, y1 = g.y + g.h, x2 = t.x + t.w / 2, y2 = t.y;
+    const my = (y1 + y2) / 2;
+    const cls = n.membership === "DECOMMISSIONED" ? "off" : n.health;
+    paths.push(`<path class="wire ${cls}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"/>`);
+  }
+  svg.innerHTML = paths.join("");
+}
+window.addEventListener("resize", () => requestAnimationFrame(drawWires));
+
+// latidos del detector de fallos (reflejan el estado real de cada nodo)
+setInterval(() => {
+  if (!S.beats || !S.map || document.hidden) return;
+  blink("m-fd");
+  for (const n of S.map.nodes) {
+    if (n.membership === "DECOMMISSIONED") continue;
+    const head = nodeHead(n.node_id);
+    if (n.health === "DOWN") {
+      fly(gwEl(), head, { cls: "beat lost", dur: 700 }).then(() => {
+        if (!head) return;
+        const r = rel(head), x = document.createElement("div");
+        x.className = "miss"; x.textContent = "✗"; x.style.left = r.x + r.w / 2 + "px"; x.style.top = r.y + "px";
+        fx.appendChild(x); setTimeout(() => x.remove(), 1000);
+      });
+    } else {
+      fly(gwEl(), head, { cls: "beat", dur: 600 }).then(() => fly(head, gwEl(), { cls: "beat", dur: 600 }));
+    }
+  }
+}, 2000);
+
+// ------------------------------------------------------------ feed en vivo
+function setConn(on) { const c = $("#conn"); c.className = "conn " + (on ? "on" : "off"); c.textContent = on ? "● en vivo" : "● sin conexión con el gateway"; }
+async function pollFeed() {
+  try {
+    const r = await fetch(`/cluster/feed?after=${S.seq}`, { cache: "no-store" });
+    const d = await r.json();
+    setConn(true);
+    if (S.boot !== null && d.boot !== S.boot) {
+      S.seq = d.seq; toast("El gateway se ha reiniciado", "warn"); refreshSoon(0);
+    } else if (S.seq < 0) {
+      S.seq = d.seq;  // primera sincronización: no se reanima el pasado
+    } else {
+      for (const it of d.items) { S.seq = Math.max(S.seq, it.seq); handle(it); }
+    }
+    S.boot = d.boot;
+  } catch (e) { setConn(false); }
+  setTimeout(pollFeed, 350);
+}
+
+function handle(it) {
+  if (it.kind === "request") { addRequest(it); queueRequest(it); }
+  else if (it.kind === "event") { addEvent(it); animateEvent(it); refreshSoon(400); }
+}
+
+// peticiones: se animan de dos en dos para que se puedan seguir
+const reqQueue = []; let reqRunning = 0;
+function queueRequest(it) {
+  reqQueue.push(it);
+  while (reqQueue.length > 30) reqQueue.shift();
+  pumpRequests();
+}
+function pumpRequests() {
+  while (reqRunning < 2 && reqQueue.length) {
+    const it = reqQueue.shift();
+    reqRunning++;
+    const fast = reqQueue.length > 6;
+    animateRequest(it, fast).catch(() => {}).finally(() => { reqRunning--; refreshSoon(150); pumpRequests(); });
+  }
+}
+
+async function animateRequest(it, fast) {
+  const k = fast ? .45 : 1;
+  const C = clientEl(), G = gwEl(), D = dbEl();
+  const hue = it.object_id ? hueOf(it.object_id) : 215;
+  const lbl = short(it.key, 16);
+  const ok = it.status < 400;
+  blink("m-api");
+  hold(3200 * k);
+  if (it.op === "PUT") {
+    gwNote(`PUT ${it.key}: calcular SHA-256 y elegir 2 nodos con HRW`);
+    await fly(C, G, { label: "PUT " + lbl, cls: "op-PUT", dur: 650 * k });
+    blink("m-hrw");
+    const failures = it.failures || {};
+    for (const [n, why] of Object.entries(failures)) {
+      if (String(why).startsWith("omitido")) mark(n, "✗ " + why, "bad");
+      else fly(G, nodeHead(n), { label: lbl, cls: "data", hue, dur: 650 * k }).then(() => mark(n, "✗ no responde", "bad"));
+    }
+    const targets = it.replicas || it.stored_on || [];
+    await Promise.all(targets.map((n) => fly(G, nodeHead(n), { label: lbl, cls: "data", hue, dur: 750 * k })
+      .then(() => mark(n, "✓ guardado (fsync)", "ok"))));
+    if (ok) {
+      await fly(G, D, { label: `commit v${it.version}`, cls: "meta", dur: 550 * k });
+      refreshSoon(0);
+      gwNote(`PUT ${it.key} → ${it.status}: ${targets.length} copias confirmadas en ${targets.join(" y ")}`, "ok");
+      await fly(G, C, { label: `${it.status} ✓`, cls: "ok", dur: 600 * k });
+    } else {
+      gwNote(`PUT ${it.key} → ${it.status}: ${it.error}`, "bad");
+      await fly(G, C, { label: `${it.status} ✗`, cls: "bad", dur: 600 * k });
+    }
+  } else if (it.op === "GET") {
+    gwNote(`GET ${it.key}: consultar metadatos y leer una réplica`);
+    await fly(C, G, { label: "GET " + lbl, cls: "op-GET", dur: 600 * k });
+    await fly(G, D, { label: "¿dónde está?", cls: "meta", dur: 450 * k });
+    for (const a of it.attempts || []) {
+      const [n, res] = a.split("=");
+      if (res === "not-modified") continue;
+      if (res === "down") { mark(n, "✗ caído: se salta", "bad"); continue; }
+      await fly(G, nodeHead(n), { label: "leer", cls: "op-GET", dur: 420 * k });
+      if (res === "ok") {
+        flashBox(it.object_id, n, "flash-ok");
+        await fly(nodeHead(n), G, { label: lbl, cls: "data", hue, dur: 600 * k });
+      } else if (res === "corrupt") {
+        flashBox(it.object_id, n, "flash-bad");
+        mark(n, "✗ SHA-256 no coincide: copia descartada", "bad");
+        await wait(350 * k);
+      } else if (res === "missing") { mark(n, "✗ no tiene la copia", "bad"); await wait(300 * k); }
+      else { mark(n, "✗ sin respuesta", "bad"); await wait(300 * k); }
+    }
+    if (it.status === 200) {
+      gwNote(`GET ${it.key} → 200: servido por ${it.served_by}, SHA-256 verificado ✓`, "ok");
+      await fly(G, C, { label: "200 ✓ " + lbl, cls: "ok", dur: 600 * k });
+    } else if (it.status === 304) {
+      await fly(G, C, { label: "304 sin cambios", cls: "ok", dur: 600 * k });
+    } else {
+      gwNote(`GET ${it.key} → ${it.status}: ${it.error}`, "bad");
+      await fly(G, C, { label: `${it.status} ✗`, cls: "bad", dur: 600 * k });
+    }
+  } else if (it.op === "DELETE") {
+    await fly(C, G, { label: "DELETE " + lbl, cls: "op-DELETE", dur: 600 * k });
+    await fly(G, D, { label: "lápida", cls: "meta", dur: 500 * k });
+    for (const n of it.queued || []) mark(n, "🗑 borrado físico en cola", "warn");
+    refreshSoon(0);
+    gwNote(`DELETE ${it.key} → 204: ya no existe; las copias se borran en segundo plano`, "ok");
+    await fly(G, C, { label: "204 ✓", cls: ok ? "ok" : "bad", dur: 550 * k });
+  } else {  // HEAD y LIST sólo consultan metadatos
+    const what = it.op === "LIST" ? `LIST ${it.key || it.bucket}` : "HEAD " + lbl;
+    await fly(C, G, { label: what, cls: "op-" + it.op, dur: 550 * k });
+    await fly(G, D, { label: "metadatos", cls: "meta", dur: 450 * k });
+    const answer = !ok ? `${it.status} ✗` : it.op === "LIST" ? `${it.count} objetos` : "200 · metadatos";
+    gwNote(`${it.op} ${it.key || it.bucket} → ${it.status} (sólo metadatos: no toca los nodos)`, ok ? "ok" : "bad");
+    await fly(G, C, { label: answer, cls: ok ? "ok" : "bad", dur: 550 * k });
+  }
+}
+
+const COPY_LABEL = { "repair-corrupt": "reparar", "repair-missing": "reponer", "re-replication": "re-replicar", "rebalance": "reequilibrar", "drain": "drenar" };
+function animateEvent(it) {
+  const t = it.type, d = it.data || {};
+  if (t.startsWith("replica.") && d.from && d.to) {
+    const reason = t.slice(8);
+    blink("m-rec");
+    const delay = Math.min(S.copyBacklog++ * 140, 4000);
+    setTimeout(() => {
+      S.copyBacklog = Math.max(0, S.copyBacklog - 1);
+      fly(nodeHead(d.from), nodeHead(d.to), { label: COPY_LABEL[reason] || reason, cls: "data", hue: hueOf(it.object_id || ""), dur: 950 })
+        .then(() => { mark(d.to, reason.startsWith("repair") ? "✓ copia reparada" : "✓ copia recibida", "ok"); refreshSoon(100); });
+    }, delay * S.speed);
+    if (reason !== "rebalance") gwNote(it.message, "ok");
+    return;
+  }
+  switch (t) {
+    case "integrity.corrupt":
+      flashBox(it.object_id, it.node_id, "flash-bad");
+      mark(it.node_id, "⚠ corrupción detectada", "bad");
+      toast(it.message, "bad");
+      break;
+    case "replica.missing": mark(it.node_id, "✗ réplica ausente", "bad"); break;
+    case "node.suspect": restartClass(nodeCard(it.node_id), "shake", 600); blink("m-fd"); toast(it.message, "warn"); break;
+    case "node.down": restartClass(nodeCard(it.node_id), "shake", 600); blink("m-fd");
+      toast(`${it.node_id} CAÍDO: las lecturas usan la otra réplica y las escrituras van al siguiente nodo HRW`, "bad"); break;
+    case "node.recovering": blink("m-fd"); toast(`${it.node_id} vuelve a responder: reconciliando su disco…`, ""); break;
+    case "node.healthy": toast(it.message, "ok"); break;
+    case "node.joined": case "node.rejoined": toast(`${it.node_id} se une al clúster: empieza el reequilibrado`, ""); refreshSoon(0); break;
+    case "node.draining": case "node.decommissioned": case "node.active": case "node.weight": toast(it.message, ""); break;
+    case "gc.orphan": mark(it.node_id, "🗑 huérfano eliminado", "warn"); break;
+    case "reconcile.summary": blink("m-rec"); gwNote(it.message); break;
+    case "scrub.summary":
+      blink("m-scrub"); gwNote(it.message);
+      for (const r of nodesEl.querySelectorAll(".rack")) restartClass(r, "scan", 1300);
+      break;
+    case "object.unavailable": toast(it.message, "bad"); break;
+  }
+}
+
+// ------------------------------------------------------------ listas
+function addRequest(it) {
+  $("#requests-empty").style.display = "none";
+  const li = document.createElement("li");
+  let detail = "";
+  if (it.error) detail = it.error + (it.attempts ? " · " + it.attempts.join(", ") : "");
+  else if (it.op === "PUT") detail = `→ ${(it.replicas || []).join(" + ")} · v${it.version} · ${fmtBytes(it.size)}`;
+  else if (it.op === "GET") detail = it.status === 304 ? "sin cambios (ETag)" : `servido por ${it.served_by} · intentos: ${(it.attempts || []).join(", ")}`;
+  else if (it.op === "DELETE") detail = it.deleted ? `lápida en metadatos · borrado físico en ${(it.queued || []).join(", ") || "—"}` : "no existía (DELETE es idempotente)";
+  else if (it.op === "LIST") detail = `${it.count} objetos · sólo metadatos`;
+  else if (it.op === "HEAD") detail = `réplicas: ${(it.replicas || []).join(", ")} · sólo metadatos`;
+  if (it.ms != null) detail += ` · ${it.ms} ms`;
+  li.innerHTML = `<div class="row"><span class="op ${esc(it.op)}">${esc(it.op)}</span>
+    <span class="key" title="${esc(it.bucket)}/${esc(it.key || "")}">${esc(it.key || it.bucket + "/")}</span>
+    <span class="code ${it.status < 400 ? "ok" : "bad"}">${it.status}</span></div>
+    <div class="detail" title="${esc(detail)}">${esc(detail)}</div>`;
+  const ul = $("#requests");
+  ul.prepend(li);
+  while (ul.children.length > 6) ul.lastChild.remove();
+}
+
+function eventKind(t) {
+  if (/^(integrity|object\.unavailable|node\.down)/.test(t)) return "bad";
+  if (/^(node\.suspect|replica\.missing|gc)/.test(t)) return "warn";
+  if (/^(replica\.(repair|re-)|node\.(healthy|joined))/.test(t)) return "ok";
+  if (/^(replica|node|reconcile|scrub)/.test(t)) return "info";
+  return "";
+}
+function addEvent(e) {
+  const li = document.createElement("li");
+  const ts = new Date(e.ts).toLocaleTimeString();
+  li.innerHTML = `<time>${esc(ts)}</time><span class="etype ${eventKind(e.type)}" title="${esc(e.type)}">${esc(e.type)}</span><span>${esc(e.message)}</span>`;
+  const ol = $("#events");
+  ol.prepend(li);
+  while (ol.children.length > 80) ol.lastChild.remove();
+}
+
+// ------------------------------------------------------------ inspector
+async function refreshInspector() {
+  const sel = S.selected;
+  if (!sel) return;
+  let d;
+  try {
+    const r = await fetch(`/cluster/locate?bucket=${encodeURIComponent(sel.bucket)}&key=${encodeURIComponent(sel.key)}`, { cache: "no-store" });
+    if (r.status === 404) { $("#inspect").innerHTML = `<div class="inspect-empty">${esc(sel.key)} ya no existe (borrado).</div>`; S.selected = null; highlight(null); return; }
+    d = await r.json();
+  } catch (e) { return; }
+  const o = d.object, maxScore = Math.max(...d.placement.ranking.map((x) => x.score), 1e-9);
+  const reps = new Map(d.replicas.map((r) => [r.node_id, r]));
+  $("#inspect").className = "";
+  $("#inspect").innerHTML = `
+    <dl class="kv">
+      <dt>clave</dt><dd title="${esc(o.bucket)}/${esc(o.key)}">${esc(o.bucket)}/${esc(o.key)}</dd>
+      <dt>id estable</dt><dd>${esc(o.id)}</dd>
+      <dt>versión</dt><dd>v${o.version} · blob ${esc(o.blob_id.slice(-8))}</dd>
+      <dt>tamaño</dt><dd>${fmtBytes(o.size)} · ${esc(o.content_type)}</dd>
+      <dt>SHA-256</dt><dd title="${esc(o.checksum)}">${esc(o.checksum.slice(0, 24))}…</dd>
+    </dl>
+    <div class="rank">
+      ${d.placement.ranking.map((x) => {
+        const r = reps.get(x.node_id);
+        return `<div class="rank-row ${x.desired ? "want" : ""}">
+          <span>${esc(x.node_id)}</span>
+          <div class="rank-bar" title="puntuación HRW ${x.score}"><i style="width:${(100 * x.score / maxScore).toFixed(1)}%"></i></div>
+          ${r ? `<span class="tag ${esc(r.status)}">copia ${esc(r.status)}</span>` : x.desired ? `<span class="tag want">deseado</span>` : `<span></span>`}
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="hint">Barras = puntuación HRW de cada nodo para este id (−peso / ln hash(id, nodo)).
+      Las <b>2 más altas</b> son la ubicación deseada; si una falla se usa la siguiente.
+      Réplicas reales: ${d.replicas.map((r) => `${esc(r.node_id)} (${esc(r.status)}${r.desired ? "" : ", fuera de sitio"})`).join(", ") || "ninguna"}.</div>
+    <div class="actions">
+      <button class="btn" id="btn-get">Leer (GET)</button>
+      <button class="btn" id="btn-head">Metadatos (HEAD)</button>
+    </div>`;
+  $("#btn-get").onclick = () => fetch(objPath(o.bucket, o.key), { cache: "no-store" });
+  $("#btn-head").onclick = () => fetch(objPath(o.bucket, o.key), { method: "HEAD", cache: "no-store" });
+}
+
+// ------------------------------------------------------------ controles
+$("#speed").onchange = (e) => { S.speed = Number(e.target.value); };
+$("#beats").onchange = (e) => { S.beats = e.target.checked; };
+$("#upload").onchange = async (e) => {
+  for (const f of e.target.files) {
+    await fetch(objPath("default", "ui/" + f.name), { method: "PUT", body: f, headers: { "Content-Type": f.type || "application/octet-stream" } });
+  }
+  e.target.value = "";
+};
+
+async function init() {
+  try {
+    const cfg = (await (await fetch("/cluster/config")).json()).settings;
+    S.config = cfg;
+    $("#contract").innerHTML = [
+      `RF=${cfg.replication_factor}`, `W=${cfg.write_acks}`, "ubicación HRW", "SHA-256",
+      `re-replica tras ${cfg.repair_delay_s}s`, `reconcilia cada ${cfg.reconcile_interval_s}s`,
+    ].map((t) => `<span class="chip">${esc(t)}</span>`).join("");
+    const ev = (await (await fetch("/cluster/events?limit=40")).json()).events;
+    for (const e of ev.reverse()) addEvent(e);
+  } catch (e) { setConn(false); }
+  await refreshMap();
+  pollFeed();
+}
+init();
+</script>
+</body>
+</html>

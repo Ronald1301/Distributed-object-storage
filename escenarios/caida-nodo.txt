@@ -1,0 +1,30 @@
+# Disponibilidad y reparación de UN fichero tuyo cuando se cae un nodo.
+#
+# Uso:   python3 scripts/p16.py run escenarios/caida-nodo.txt RUTA/AL/FICHERO
+# Recomendado arrancar con tiempos cortos:
+#   REPAIR_DELAY_SECONDS=10 RECONCILE_INTERVAL_SECONDS=3 docker compose up -d --wait
+
+echo Subir el fichero y ver dónde quedan sus copias
+put $1 caida/$NAME
+locate caida/$NAME
+
+echo Se cae storage2
+!docker compose stop storage2
+verify $1 caida/$NAME
+wait storage2 DOWN
+
+echo Con un nodo caído se puede seguir escribiendo (2 nodos vivos)
+put $1 caida/copia-$NAME
+status
+
+echo Pasado REPAIR_DELAY las copias perdidas se re-crean en los nodos vivos
+wait repaired --timeout 300
+events 8
+
+echo Vuelve storage2: reconciliación
+!docker compose start storage2
+wait storage2 HEALTHY
+wait converged
+status
+verify $1 caida/$NAME
+verify $1 caida/copia-$NAME
