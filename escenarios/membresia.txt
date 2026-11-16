@@ -1,0 +1,18 @@
+# Cambios de membresía: se añade storage4 y después se retira (drain).
+#
+# Uso:   python3 scripts/p16.py run escenarios/membresia.txt
+
+seed 20 membresia/
+status
+
+echo Se añade storage4: se registra solo y recibe ~25 % de las réplicas
+!docker compose --profile scale up -d --wait storage4
+wait storage4 HEALTHY
+wait converged
+status
+
+echo Se retira storage4: sus copias pasan al resto antes de darlo de baja
+drain storage4
+wait storage4 DECOMMISSIONED
+status
+!docker compose --profile scale stop storage4
