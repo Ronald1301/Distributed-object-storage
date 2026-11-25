@@ -6,7 +6,7 @@ detección de fallos, reparación automática, reconciliación y cambios de memb
 
 - **Stack**: Python 3.13 · FastAPI · PostgreSQL 17 · Docker Compose (sin Kafka, Redis ni Kubernetes).
 - **Diseño y justificación** de cada decisión: [`docs/DISENO.md`](docs/DISENO.md).
-- **Orientaci?n oficial**: [`docs/ORIENTACION.md`](docs/ORIENTACION.md).
+- **Orientación oficial**: [`docs/ORIENTACION.md`](docs/ORIENTACION.md).
 - **Guion de la demo** para la defensa: [`docs/DEMO.md`](docs/DEMO.md).
 - **Todos los comandos** (Docker, CLI, guiones, curl): [`docs/COMANDOS.md`](docs/COMANDOS.md).
 - **Interfaz visual en vivo**: <http://localhost:8080/ui> (o `python3 scripts/p16.py watch`).
