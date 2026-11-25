@@ -11,6 +11,19 @@ detección de fallos, reparación automática, reconciliación y cambios de memb
 - **Todos los comandos** (Docker, CLI, guiones, curl): [`docs/COMANDOS.md`](docs/COMANDOS.md).
 - **Interfaz visual en vivo**: <http://localhost:8080/ui> (o `python3 scripts/p16.py watch`).
 
+## Ramas y versiones
+
+El trabajo se organiza por fases. Cada cambio se integra mediante un pull request dirigido a la rama de la versión correspondiente.
+
+| Rama | Estado y propósito |
+|---|---|
+| `main` | Rama estable del repositorio; contiene la versión nativa actual y documentación compartida. |
+| `native-v1` | Línea base nativa con FastAPI, PostgreSQL y HRW para comparación con Ray. Se conserva en el tag `baseline-postgres-2026-11` y está protegida. |
+| `ray-prototype` | Rama de la Fase 1 para desarrollar y documentar el prototipo con Ray. |
+| `native-v2` | Rama planificada para la Fase 2: rediseño nativo sin Ray. Se creará después de la entrega del prototipo. |
+
+Los PR de la versión nativa de referencia deben dirigirse a `native-v1`; los del prototipo, a `ray-prototype`. Los cambios documentales generales pueden proponerse contra `main`.
+
 ```
 Cliente ──HTTP──▶ Gateway :8080 ──▶ storage1 / storage2 / storage3 (+ storage4 opcional)
                      │                   (cada uno con su propio volumen Docker)
