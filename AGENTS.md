@@ -31,12 +31,14 @@ Cada PR va contra la rama de la versión que modifica (no todo contra `main`). L
 
 - **Ray sólo en `ray-prototype`.** Después de la Fase 1 Ray no puede ser dependencia de ejecución; en la memoria puede aparecer sólo como comparación.
 - **No introduzcas tecnologías que automaticen o simplifiquen decisiones de diseño distribuido** (coordinación, elección de líder, consenso, descubrimiento, orden de versiones, exclusión mutua) sin que el profesor lo haya confirmado por escrito. Ante la duda: no lo añadas, descríbelo en el PR y pregunta a Ronald, que consulta al profesor. Sin respuesta, se asume que no está permitido.
-- **PostgreSQL:** sólo instancia única, nunca su variante distribuida o replicada (réplicas, Patroni…). FastAPI sólo como capa HTTP. Su continuidad en la versión final **está sin decidir**: en `ray-prototype` y `native-v2` no los uses salvo indicación expresa.
+- **PostgreSQL:** sólo instancia única, nunca su variante distribuida o replicada (réplicas, Patroni…). FastAPI sólo como capa HTTP. El profesor (25-nov) confirmó que la versión Ray **puede** usar ambos, pero espera que saque partido de Ray; por defecto `ray-prototype` guarda metadatos en un actor propio y no usa PostgreSQL salvo indicación expresa de Ronald. En `native-v2` no se usan.
+- **Sin puntos únicos de fallo en la entrega final (regla del profesor, 25-nov):** si por diseño hay un componente cuya caída detiene el servicio (una instancia de PostgreSQL, un único gateway, un coordinador único), el intento no se supera. En `native-v2` no diseñes ni introduzcas ninguno; en `ray-prototype` y `native-v1` se permiten pero deben quedar declarados en la documentación.
+- **Saca partido de Ray en `ray-prototype`:** usa sus mecanismos (actores con reinicio, actores con nombre, tareas con reintentos, `ray.wait` para quórum, estrategias de scheduling, object store) donde aporten y documenta qué hizo Ray y qué la aplicación. Verifica la API contra la documentación de la versión instalada.
 - No abras issues ni PRs en `matcom/distributed-systems-2026`, ni envíes mensajes al profesor: lo hace Ronald.
 - Documenta qué hace cada cosa en la app y qué hace Ray (insumo del mapa de dependencias del middleware).
 - Si usas IA para generar código o documentos, mantén al día el bloque `ai_use` del repo.
 
-Antes de cambiar nada, lee `README.md` y `docs/DISENO.md`. Si algo de esta guía no coincide con el repo, manda el repo y corrige este archivo.
+Antes de cambiar nada, lee `README.md` y `docs/DISENO.md`. Visión general del plan y fechas: `PIPELINE.md`. Si algo de esta guía no coincide con el repo, manda el repo y corrige este archivo.
 
 ## Comandos
 
