@@ -1,0 +1,46 @@
+# Línea base nativa reproducible para comparar con ray-prototype.
+#
+# Requisitos:
+#   - Ejecutar desde la raíz del repositorio.
+#   - Tener el clúster levantado y sano con al menos tres nodos.
+#   - Usar dos archivos locales distintos como entradas.
+#
+# Preparación recomendada (desde la raíz del proyecto):
+#   REPAIR_DELAY_SECONDS=10 RECONCILE_INTERVAL_SECONDS=3 docker compose up -d --build --wait
+#
+# Ejecución:
+#   python3 scripts/p16.py run escenarios/baseline.txt ARCHIVO1 ARCHIVO2
+#
+# La CLI comprueba que ambos archivos existen antes de empezar. `verify` compara
+# su SHA-256 local con los bytes recuperados del almacén. Si el guion se
+# interrumpe antes del último bloque, restaura storage2 manualmente.
+
+echo R1: subir dos objetos y registrar la ubicación deseada
+put $1 baseline/$NAME
+put $2 baseline/segundo-$NAME
+locate baseline/$NAME
+locate baseline/segundo-$NAME
+verify $1 baseline/$NAME
+verify $2 baseline/segundo-$NAME
+
+echo Detener storage2 y esperar a que el monitor lo declare DOWN
+!docker compose stop storage2
+wait storage2 DOWN --timeout 120
+
+echo Comprobar los checksums desde las réplicas supervivientes
+verify $1 baseline/$NAME
+verify $2 baseline/segundo-$NAME
+
+echo Esperar la re-replicación y guardar evidencia de eventos
+wait repaired --timeout 300
+events 12
+verify $1 baseline/$NAME
+verify $2 baseline/segundo-$NAME
+
+echo Restaurar storage2 y esperar convergencia
+!docker compose start storage2
+wait storage2 HEALTHY --timeout 180
+wait converged --timeout 300
+status
+verify $1 baseline/$NAME
+verify $2 baseline/segundo-$NAME
