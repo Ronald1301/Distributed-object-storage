@@ -5,10 +5,6 @@ el sistema. Es el contrato de la versión de la Fase 1 y la referencia para la v
 nativa final; los códigos HTTP de `native-v1` se dan como equivalencia. Cuando una cifra
 es un parámetro, se indica su valor por defecto.
 
-> Estado: borrador para la entrega del 1-dic (issue #36). Las garantías de PUT y GET las
-> tiene que cumplir la capa de operaciones (#32); si su comportamiento real difiere, se
-> corrige ella o este documento, pero no se deja la diferencia sin anotar.
-
 ## 1. Modelo
 
 - Un **objeto** es una secuencia de bytes con metadatos, identificada por su nombre
