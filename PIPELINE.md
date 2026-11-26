@@ -57,17 +57,18 @@ Consecuencias que asumimos:
 
 ### Cómo sacarle partido a Ray
 
-Mecanismos de Ray a evaluar y usar donde aporten (se verifican contra la documentación de la versión instalada antes de depender de ellos):
+Mecanismos de Ray que usaremos donde aporten, contrastados con la documentación oficial de Ray (rama `latest`, consultada el 25-nov-2026; hay que volver a comprobar con la versión que se instale):
 
-| Necesidad del sistema | Mecanismo de Ray a explorar |
-|---|---|
-| Nodos de almacenamiento con estado | Actores con `max_restarts`, y estado duradero en disco |
-| Descubrimiento de nodos | Actores con nombre |
-| Escritura con quórum W=2 | Tareas en paralelo con `ray.wait(num_returns=W)` |
-| Reintentos | `max_retries` de las tareas (no es exactly-once: ver riesgos) |
-| Reparto de réplicas en nodos distintos | Estrategias de scheduling (`SPREAD`, afinidad) y recursos lógicos |
-| Transferencia de datos entre nodos | Object store y `ObjectRef` (transporte, nunca almacenamiento duradero) |
-| Observabilidad | Dashboard y API de estado de Ray |
+| Necesidad | Mecanismo | Lo que dice la documentación | Qué implica para nosotros |
+|---|---|---|---|
+| Nodos con estado | Actores con `max_restarts` | Por defecto vale 0 (no se reinicia); -1 reinicia sin límite. Al reiniciar se vuelve a ejecutar el constructor y el estado no se conserva; recomienda guardar checkpoints propios | Fijar `max_restarts` de forma explícita; persistir en disco y recuperar el estado en el constructor |
+| Descubrimiento | Actores con nombre (`ray.get_actor`) | El nombre se acota por namespace. Un actor con nombre que no es `detached` solo se puede recuperar mientras viva el driver que lo creó. `lifetime="detached"` lo desacopla del job y obliga a matarlo con `ray.kill`. Existe `get_if_exists` | Usar `detached` para nodos y metadatos y fijar un namespace |
+| Reintentos de tareas | `max_retries` | Por defecto 3 (-1 infinito, 0 desactiva). `retry_exceptions` es `False` por defecto: los errores de la aplicación no se reintentan. Reintenta si muere el worker o la máquina | La documentación consultada no habla de idempotencia; la protección (`request_id`, `blob_id` nuevo por intento) es nuestra |
+| Reintentos de tareas de actor | `max_task_retries` | Por defecto 0 (a lo sumo una vez); un `RayActorError` puede lanzarse aunque la tarea sí se ejecutó. Con valor > 0 o -1 es al menos una vez | Resultado ambiguo (como el timeout ambiguo de los laboratorios): el cliente reintenta con el mismo `request_id` |
+| Escritura con quórum W | `ray.wait(refs, num_returns=W, timeout=...)` | Devuelve dos listas (listas y no listas); sin `timeout` espera hasta tener `num_returns`. La página no dice que cancele las tareas no listas | Comprobar con un experimento si siguen ejecutándose. "Lista" se debe contrastar con `ray.get` para contar solo éxitos (no contrastado con la documentación) |
+| Reparto de réplicas | `scheduling_strategy="SPREAD"` | "Intenta" repartir entre nodos (no garantiza). `NodeAffinitySchedulingStrategy` es de bajo nivel y tiene el flag `soft`; también existe `PlacementGroupSchedulingStrategy` | No contar con nodos distintos solo por `SPREAD`: fijar cada nodo de almacenamiento o documentar la limitación |
+| Transferencia de datos | Object store y `ObjectRef` | Si muere el dueño, `OwnerDiedError` y no hay recuperación. Lo creado con `ray.put` no es recuperable; los resultados de tareas de actor solo se reconstruyen si `max_task_retries` no es 0 | Un `ObjectRef` es transporte, nunca almacenamiento duradero |
+| Observabilidad | Dashboard y API de estado | No contrastado (pendiente de leer esa documentación) | Revisar antes de documentarlo en el mapa de dependencias |
 
 Cada uso se documenta: qué hizo Ray y qué tuvo que implementar la aplicación. Esa tabla es la base del mapa de dependencias.
 
@@ -101,10 +102,15 @@ Dependencias: R6 usa las interfaces de R2 y R3 (se acuerdan el primer día); R5 
 
 ### Riesgos técnicos conocidos
 
-- Los reintentos de Ray no son exactly-once: dos intentos de un mismo PUT pueden dejar blobs huérfanos. Mitigación: `blob_id` nuevo por intento, commit atómico de metadatos y recolección de huérfanos.
-- Un actor reiniciado pierde su memoria: todo lo que deba sobrevivir se escribe en disco (temporal + fsync + renombrado).
-- Un `ObjectRef` es una referencia, no almacenamiento duradero.
-- El scheduling por recursos lógicos no aísla fallos.
+- Un reintento puede repetir el efecto de una operación: dos intentos de un mismo PUT pueden dejar blobs huérfanos. Mitigación: `blob_id` nuevo por intento, commit atómico de metadatos y recolección de huérfanos.
+- Las tareas de actor son "a lo sumo una vez" por defecto: un error puede llegar aunque la operación se ejecutó. El cliente no puede saber si ocurrió; por eso el mismo `request_id` en cada reintento.
+- Un actor reiniciado pierde su memoria; si `max_restarts` queda en 0 no se reinicia. Todo lo que deba sobrevivir se escribe en disco (temporal + fsync + renombrado) y se recupera en el constructor.
+- Un actor con nombre sin `lifetime="detached"` muere con el driver que lo creó.
+- Un `ObjectRef` es una referencia, no almacenamiento duradero: si muere su dueño, el objeto se pierde.
+- Preguntas abiertas que resolverá el experimento R4: si `ray.wait` deja ejecutando las tareas no listas, si los reintentos conservan el mismo id de tarea (el ejemplo de la documentación sugiere que sí, sin afirmarlo), y qué ve el cliente cuando un actor cae a mitad de una operación.
+- El scheduling por recursos lógicos no aísla fallos (así lo explican las clases; la página de scheduling consultada no lo afirma ni lo niega).
+
+Fuentes de Ray consultadas: [fallos de actores](https://docs.ray.io/en/latest/ray-core/fault_tolerance/actors.html), [fallos de tareas](https://docs.ray.io/en/latest/ray-core/fault_tolerance/tasks.html), [fallos de objetos](https://docs.ray.io/en/latest/ray-core/fault_tolerance/objects.html), [`ray.wait`](https://docs.ray.io/en/latest/ray-core/api/doc/ray.wait.html), [scheduling](https://docs.ray.io/en/latest/ray-core/scheduling/index.html), [actores con nombre](https://docs.ray.io/en/latest/ray-core/actors/named-actors.html).
 
 ## 5. Fase 2: diseño final nativo (hasta el 1 de enero)
 
