@@ -1,12 +1,16 @@
 """Pruebas del MetadataService dentro de Ray (se omiten si Ray no está instalado).
 
 Evidencia para el mapa de dependencias (#38): reinicio real del actor por Ray,
-descubrimiento por nombre y tipo de las excepciones a través de Ray.
+descubrimiento por nombre, vida del actor ``detached`` más allá de su driver (#47)
+y tipo de las excepciones a través de Ray.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -16,6 +20,29 @@ from pathlib import Path
 from ray_proto import metadata_actor
 
 ray = metadata_actor.ray
+
+# Otro driver: se conecta al mismo clúster, crea un actor detached y otro que no lo
+# es, confirma un objeto en cada uno y termina.
+_OTHER_DRIVER = """
+import hashlib, json, sys
+import ray
+from ray_proto import metadata_actor
+
+address = sys.argv[1]
+specs = {"detached": (sys.argv[2], sys.argv[3], True), "attached": (sys.argv[4], sys.argv[5], False)}
+ray.init(address=address, log_to_driver=False)
+out = {}
+for label, (root, name, detached) in specs.items():
+    actor = metadata_actor.get_or_create_metadata_service(
+        root, name=name, detached=detached, snapshot_every=0)
+    reserved = ray.get(actor.reserve.remote("b", "k"))
+    obj, _ = ray.get(actor.commit_version.remote(
+        object_id=reserved["id"], blob_id=metadata_actor.new_ulid(), size=1,
+        checksum=hashlib.sha256(b"x").hexdigest(), content_type="text/plain",
+        user_metadata={}, node_ids=["storage1", "storage2"]))
+    out[label] = {"object_id": obj["id"], "pid": ray.get(actor.stats.remote())["pid"]}
+print(json.dumps(out))
+"""
 
 
 @unittest.skipUnless(ray is not None, "Ray no está instalado")
@@ -93,6 +120,73 @@ class MetadataServiceRayTests(unittest.TestCase):
         self.assertEqual(ray.get(self.actor.dump_state.remote()), before)
         print(f"\n[evidencia] pid {pid_before} -> {stats['pid']}; {elapsed:.2f} s hasta responder; "
               f"errores durante el reinicio: {sorted(set(errors)) or 'ninguno'}; recovery={stats['recovery']}")
+
+    def run_other_driver(self, detached: dict, attached: dict) -> dict:
+        env = dict(os.environ)
+        env.pop("RAY_ADDRESS", None)  # se conecta a la dirección explícita de este clúster
+        done = subprocess.run(
+            [sys.executable, "-c", _OTHER_DRIVER, ray.get_runtime_context().gcs_address,
+             detached["root"], detached["name"], attached["root"], attached["name"]],
+            capture_output=True, text=True, timeout=180, env=env, check=False,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr[-3000:])
+        return json.loads(done.stdout.strip().splitlines()[-1])
+
+    def wait_until_dead(self, name: str, timeout_s: float = 60) -> str:
+        """Espera a que el actor con nombre deje de existir y devuelve cómo se vio."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                handle = metadata_actor.get_metadata_service(name)
+                ray.get(handle.stats.remote(), timeout=5)
+            except ValueError:  # el nombre ya no está registrado
+                return "ValueError (get_actor)"
+            except ray.exceptions.ActorDiedError as exc:
+                return type(exc).__name__
+            except ray.exceptions.GetTimeoutError:
+                pass
+            time.sleep(0.1)
+        self.fail(f"el actor {name} sigue vivo {timeout_s} s después de terminar su driver")
+
+    def kill_by_name(self, name: str) -> None:
+        try:
+            ray.kill(metadata_actor.get_metadata_service(name), no_restart=True)
+        except (ValueError, ray.exceptions.RayError):
+            pass
+
+    def test_only_the_detached_actor_survives_the_driver_that_created_it(self) -> None:
+        roots = tempfile.TemporaryDirectory()
+        self.addCleanup(roots.cleanup)
+        tag = uuid.uuid4().hex[:8]
+        detached = {"root": str(Path(roots.name) / "detached"), "name": f"p16-metadata-detached-{tag}"}
+        attached = {"root": str(Path(roots.name) / "attached"), "name": f"p16-metadata-attached-{tag}"}
+
+        created = self.run_other_driver(detached, attached)
+        self.addCleanup(self.kill_by_name, detached["name"])
+
+        # Su driver ya terminó: Ray mata el actor que no es detached y no lo reinicia,
+        # aunque tenga max_restarts=-1 (no es un fallo, es el fin de su vida).
+        started = time.monotonic()
+        seen = self.wait_until_dead(attached["name"])
+        elapsed = time.monotonic() - started
+
+        # El detached sigue siendo el mismo proceso, con su estado, y se encuentra por nombre.
+        survivor = metadata_actor.get_metadata_service(detached["name"])
+        self.assertEqual(ray.get(survivor.stats.remote(), timeout=30)["pid"], created["detached"]["pid"])
+        self.assertEqual(ray.get(survivor.find_active.remote("b", "k"), timeout=30)["id"],
+                         created["detached"]["object_id"])
+
+        # Lo que confirmó el actor muerto sigue en su disco: un actor nuevo lo reconstruye.
+        recreated = metadata_actor.get_or_create_metadata_service(
+            attached["root"], name=attached["name"], snapshot_every=0
+        )
+        self.addCleanup(self.kill_by_name, attached["name"])
+        stats = ray.get(recreated.stats.remote(), timeout=60)
+        self.assertEqual(ray.get(recreated.find_active.remote("b", "k"), timeout=30)["id"],
+                         created["attached"]["object_id"])
+        print(f"\n[evidencia] no detached: muerto {elapsed:.2f} s después de terminar su driver "
+              f"({seen}); detached: mismo pid {created['detached']['pid']} y mismo objeto; "
+              f"recreado sobre el mismo disco: replayed_records={stats['recovery']['replayed_records']}")
 
     def test_actor_is_discoverable_by_name(self) -> None:
         obj = self.commit("k", b"x")
