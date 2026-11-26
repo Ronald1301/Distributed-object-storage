@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator
+
+STORAGE_NODE_NAMESPACE = "p16-storage-v1"
+DEFAULT_MAX_RESTARTS = 1
 
 
 def _load_blob_store():
@@ -101,6 +105,10 @@ class _StorageNode:
 
         return {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
 
+    def process_id(self) -> int:
+        """PID actual; útil para observar y probar reinicios del actor."""
+        return os.getpid()
+
 
 try:
     import ray
@@ -112,3 +120,41 @@ if ray is None:
     StorageNode = _StorageNode
 else:
     StorageNode = ray.remote(_StorageNode)
+
+
+def create_named_storage_node(
+    root: str | Path,
+    *,
+    name: str,
+    namespace: str = STORAGE_NODE_NAMESPACE,
+    max_restarts: int = DEFAULT_MAX_RESTARTS,
+):
+    """Crea o recupera un actor de almacenamiento persistente y descubrible.
+
+    El nombre es único dentro del namespace. El actor es detached para que
+    sobreviva al driver que lo creó y Ray puede reiniciarlo; ``_StorageNode``
+    vuelve a abrir el mismo directorio al ejecutar su constructor.
+    """
+    if ray is None:
+        raise RuntimeError("Ray es necesario para crear un actor StorageNode")
+    if not name.strip():
+        raise ValueError("name no puede estar vacío")
+    if not namespace.strip():
+        raise ValueError("namespace no puede estar vacío")
+    if not isinstance(max_restarts, int) or isinstance(max_restarts, bool) or max_restarts < 1:
+        raise ValueError("max_restarts debe ser un entero mayor que cero")
+
+    return StorageNode.options(
+        name=name,
+        namespace=namespace,
+        lifetime="detached",
+        max_restarts=max_restarts,
+        get_if_exists=True,
+    ).remote(str(root))
+
+
+def get_named_storage_node(name: str, *, namespace: str = STORAGE_NODE_NAMESPACE):
+    """Devuelve el actor nombrado dentro de su namespace de Ray."""
+    if ray is None:
+        raise RuntimeError("Ray es necesario para descubrir un actor StorageNode")
+    return ray.get_actor(name, namespace=namespace)
