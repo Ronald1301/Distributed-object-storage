@@ -13,6 +13,7 @@ from ray_proto.metadata_actor import (
     CommitConflict,
     PreconditionFailed,
     _MetadataService,
+    get_or_create_metadata_service,
     new_ulid,
 )
 from ray_proto.metadata_log import CorruptLogError, encode_line
@@ -406,6 +407,17 @@ class RecoveryTests(MetadataServiceTestCase):
         self.svc.close()
         with self.assertRaises(CorruptLogError):
             self.open()
+
+
+class ActorOptionsTests(unittest.TestCase):
+    def test_max_restarts_must_be_explicit_and_allow_restarts(self) -> None:
+        # 0 es el valor por defecto de Ray: el servicio no volvería tras la primera caída.
+        for bad in (0, -2):
+            with self.subTest(max_restarts=bad), self.assertRaises(ValueError):
+                get_or_create_metadata_service("sin-usar", max_restarts=bad)
+        for bad in (1.5, True, None):
+            with self.subTest(max_restarts=bad), self.assertRaises(TypeError):
+                get_or_create_metadata_service("sin-usar", max_restarts=bad)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,11 @@ Es insumo para el mapa de dependencias del middleware (#38).
 - Pruebas con Ray (se omiten si no está instalado):
   [`ray_proto/tests/test_metadata_ray.py`](../../ray_proto/tests/test_metadata_ray.py).
 - Evidencia con Ray obtenida el 25 nov 2026: Ray 2.60.1, Python 3.13.2, macOS arm64, un
-  solo nodo local. 34 tests en verde en dos pasadas seguidas.
+  solo nodo local. 34 tests en verde en dos pasadas seguidas. El 26 nov, tras #49 y #47,
+  37 tests en verde (ver el comando de abajo).
+- Si ya hay un clúster de Ray corriendo en la máquina, `ray.init()` se conecta a él y los
+  tests de Ray fallan en `setUpClass` (no admite `num_cpus`). Se pueden correr con
+  `RAY_ADDRESS=local`, que fuerza un clúster nuevo, o parar el otro con `ray stop`.
 
 ```bash
 python3 -m venv .venv
@@ -39,6 +43,7 @@ son los de `MetadataRepository`, para que el driver (#32) se parezca al gateway 
 | Escritura cortada a mitad | Nada | CRC32 por línea; una última línea incompleta o inválida se trunca (nunca se confirmó); una línea inválida con líneas válidas detrás es corrupción y se falla cerrado | `MetadataLog._read_wal`; tests `test_torn_last_record_is_discarded`, `test_complete_last_line_with_bad_crc_is_discarded`, `test_corruption_before_valid_records_fails_closed`, `test_corrupt_snapshot_fails_closed` |
 | Reintentos | Con `max_task_retries=0` **no** reintenta: una llamada interrumpida por la caída del actor devuelve error al llamante | `commit_version(request_id=…)` es idempotente: un reintento del mismo PUT devuelve la versión ya confirmada y no crea otra. El blob del reintento queda sin referencias y lo recolecta el GC | tests `test_retry_with_same_request_id_does_not_create_a_second_version`, `test_request_ids_survive_a_restart` |
 | Descubrimiento del servicio | Actor con nombre y namespace (`p16-metadata` en `p16`), `get_if_exists=True`, `ray.get_actor` | Fija el nombre y lo expone en `get_or_create_metadata_service` / `get_metadata_service` | test `test_actor_is_discoverable_by_name` (pasa con Ray 2.60.1) |
+| Vida del servicio más allá del driver (#47) | `lifetime="detached"`: el actor no pertenece al driver que lo creó y sólo muere con `ray.kill` o con el clúster. Un actor con nombre que no es detached muere al terminar su driver y Ray **no** lo reinicia, aunque tenga `max_restarts=-1` | Crea el actor detached por defecto (`detached=True`) y exige `max_restarts` explícito: -1 o ≥ 1; rechaza 0, el valor por defecto de Ray, con el que no volvería tras la primera caída | test `test_only_the_detached_actor_survives_the_driver_that_created_it`: otro proceso driver crea un actor de cada tipo y termina; el no detached ya no existe al volver el proceso (`ray.get_actor` lanza `ValueError`), el detached responde con el mismo pid y el mismo objeto, y un actor nuevo sobre el disco del muerto reaplica sus 2 registros. Test `test_max_restarts_must_be_explicit_and_allow_restarts` (sin Ray) |
 | Transporte de argumentos y errores | Serializa argumentos y resultados; re-lanza las excepciones del actor como subclase de la original | Define `CommitConflict` y `PreconditionFailed` | test `test_application_errors_keep_their_type_through_ray` (pasa con Ray 2.60.1: `except CommitConflict` funciona en el driver) |
 | Arranque de los workers | Lanza los procesos worker; con `runtime_env` los lanza con `bash -c "exec <python> …"` **sin comillas** | Pasa `PYTHONPATH` por el entorno heredado (sin `runtime_env`) | Con `runtime_env={"env_vars": …}` y el repo en `…/Redes Distribuida/`, `raylet.err` muestra `exec: /Users/…/Redes: cannot execute`; el actor nunca arranca y Ray lo da por muerto (`ACTOR_UNSCHEDULABLE_ERROR`) tras 5 intentos de un minuto. Supuesto de Ray: **rutas sin espacios** si se usa `runtime_env` |
 | Dónde corre el actor | Lo planifica en un nodo con recursos libres; tras un reinicio puede elegir otro nodo | El directorio del WAL es local: en un clúster de varios nodos hay que fijarlo con un recurso propio (`resources={"p16_metadata": 1}` y `ray start --resources`) | `get_or_create_metadata_service(resources=…)`. **TODO**: no probado en varios nodos |
@@ -67,6 +72,13 @@ son los de `MetadataRepository`, para que el driver (#32) se parezca al gateway 
   viejo: matar el actor es asíncrono. El test espera a que responda un `pid` distinto.
 - **Más allá de `max_remembered_requests`** (10 000 por defecto) se olvidan los
   `request_id` más antiguos: un reintento muy tardío crearía una versión nueva.
+- **Si el actor no fuera detached**, terminar el driver que lo creó lo mataría sin
+  reinicio: el servicio desaparecería para los demás drivers hasta que alguien lo
+  volviera a crear. Lo confirmado sigue en disco y el actor nuevo lo reconstruye.
+- **`detached` no protege de la caída del clúster**: el actor vive dentro del clúster
+  de Ray. Con `ray.init()` sin dirección, el clúster lo arranca ese mismo driver y se
+  apaga con él, así que para que el servicio sobreviva a los drivers hay que levantar
+  el clúster aparte (`ray start --head`) y conectarse con `ray.init(address=…)`.
 
 ## Punto único de fallo declarado
 
@@ -95,7 +107,8 @@ atiende de una en una, es un cuello de botella de rendimiento.
 1. `commit_version(..., request_id=...)`: un `request_id` por PUT del cliente, el mismo
    en los reintentos y un `blob_id` nuevo en cada intento.
 2. Tiempos como `float` epoch.
-3. Nombre y namespace del actor: `p16-metadata` / `p16`.
+3. Nombre y namespace del actor: `p16-metadata` / `p16`. Los StorageNode (PR #49) usan
+   otro namespace (`p16-storage-v1`) y `max_restarts=1`; falta decidir si se unifican.
 4. Si la membresía (`upsert_node`, peso, `DRAINING`) se guarda aquí o la lleva el driver.
 
 ## Preguntas para la versión nativa (Fase 2)
