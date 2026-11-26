@@ -9,14 +9,19 @@ Qué hace cada parte:
 * **Ray** ejecuta las llamadas al actor de una en una (actor síncrono,
   ``max_concurrency=1``). Eso sustituye al ``SELECT … FOR UPDATE``: ninguna
   mutación ve a otra a medias. Ray también transporta argumentos y resultados,
-  reinicia el proceso si muere (``max_restarts``) y permite encontrarlo por nombre.
+  reinicia el proceso si muere (``max_restarts``), permite encontrarlo por nombre
+  y, con ``lifetime="detached"``, lo mantiene vivo aunque termine el driver que lo
+  creó (hay que matarlo con ``ray.kill``).
 * **La aplicación** comprueba precondiciones, escribe cada mutación en el WAL con
   ``fsync`` *antes* de aplicarla y confirmarla, hace snapshots y, al arrancar
   (también tras un reinicio de Ray, que vuelve a llamar a ``__init__``),
   reconstruye el estado desde disco.
 
 Punto único de fallo declarado: hay un solo actor y su directorio vive en el disco
-del nodo Ray donde corre. Si se pierde ese disco se pierden los metadatos.
+del nodo Ray donde corre. Si se pierde ese disco se pierden los metadatos. Si el
+actor cae, lo confirmado sobrevive en disco y se reconstruye al arrancar; mientras
+se reinicia no atiende a nadie, y las llamadas en vuelo quedan con resultado
+desconocido (ver docs/fase1/dependencias-notas.md).
 
 Reglas para que reproducir el WAL dé el mismo estado:
 
@@ -82,6 +87,8 @@ etag_matches = _ids.etag_matches
 
 DEFAULT_ACTOR_NAME = "p16-metadata"
 DEFAULT_NAMESPACE = "p16"
+# Ray usa 0 por defecto (no reinicia). -1: reinicia sin límite; el estado sale del disco.
+DEFAULT_MAX_RESTARTS = -1
 REPLICA_STATUSES = frozenset({"OK", "CORRUPT", "MISSING"})
 MEMBERSHIPS = frozenset({"ACTIVE", "DRAINING", "DECOMMISSIONED"})
 
@@ -643,19 +650,34 @@ else:
     MetadataService = ray.remote(_MetadataService)
 
 
+def _check_max_restarts(max_restarts: int) -> None:
+    """Exige un valor explícito con reinicio: -1 (sin límite) o un entero >= 1.
+
+    0 (el valor por defecto de Ray) dejaría el servicio muerto tras la primera caída."""
+    if not isinstance(max_restarts, int) or isinstance(max_restarts, bool):
+        raise TypeError("max_restarts debe ser un entero")
+    if max_restarts == 0 or max_restarts < -1:
+        raise ValueError("max_restarts debe ser -1 (sin límite) o un entero >= 1")
+
+
 def get_or_create_metadata_service(
     root: str | Path,
     *,
     name: str = DEFAULT_ACTOR_NAME,
     namespace: str = DEFAULT_NAMESPACE,
-    detached: bool = False,
+    detached: bool = True,
     resources: dict[str, float] | None = None,
-    max_restarts: int = -1,
+    max_restarts: int = DEFAULT_MAX_RESTARTS,
     **service_kwargs: Any,
 ):
     """Crea el actor con nombre (o devuelve el que ya existe con ese nombre).
 
+    * ``lifetime="detached"`` (``detached=True``, por defecto): el actor no muere con
+      el driver que lo creó y cualquier driver posterior lo encuentra por nombre. Sin
+      él, Ray lo mata al terminar ese driver y no lo reinicia (no es un fallo, es el
+      fin de su vida). Un actor detached sólo se va con ``ray.kill`` o con el clúster.
     * ``max_restarts=-1``: Ray lo reinicia siempre; el ``__init__`` reconstruye el estado.
+      Se rechaza 0 (el valor por defecto de Ray).
     * ``max_task_retries=0``: Ray no re-ejecuta a ciegas una mutación interrumpida;
       el resultado queda "desconocido" y el driver reintenta con el mismo ``request_id``.
     * ``max_concurrency=1``: una llamada cada vez (equivale al ``FOR UPDATE``).
@@ -666,6 +688,7 @@ def get_or_create_metadata_service(
     de argumentos. Y si el repo está en una ruta con espacios, no use ``runtime_env``
     en ``ray.init``: Ray 2.60.1 no consigue arrancar los workers (ver
     docs/fase1/dependencias-notas.md); exporte ``PYTHONPATH`` antes de ``ray.init``."""
+    _check_max_restarts(max_restarts)
     if ray is None:
         raise RuntimeError("Ray no está instalado: use _MetadataService directamente")
     options: dict[str, Any] = {

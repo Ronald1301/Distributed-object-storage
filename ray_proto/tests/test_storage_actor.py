@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,6 +16,8 @@ from ray_proto.storage_actor import (
     InvalidBlobId,
     SidecarMissingError,
     _StorageNode,
+    create_named_storage_node,
+    get_named_storage_node,
 )
 
 
@@ -98,5 +102,80 @@ class StorageNodeTests(unittest.TestCase):
         self.assertFalse((self.root / "blobs" / f"{self.BLOB_ID}.meta.json").exists())
 
 
+@unittest.skipIf(storage_actor.ray is None, "Ray no está instalado")
+class StorageNodeRayRestartTests(unittest.TestCase):
+    BLOB_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.ray = storage_actor.ray
+        if not cls.ray.is_initialized():
+            cls.ray.init(num_cpus=1, include_dashboard=False, log_to_driver=False)
+            cls.started_ray = True
+        else:
+            cls.started_ray = False
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls.started_ray:
+            cls.ray.shutdown()
+
+    def test_named_detached_actor_recovers_blob_after_process_restart(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        temp_dir = tempfile.TemporaryDirectory(dir=repo_root)
+        self.addCleanup(temp_dir.cleanup)
+        root = Path(temp_dir.name)
+        fsync_patcher = None
+        if os.name == "nt":
+            fsync_patcher = patch.object(storage_actor._blob_store, "_fsync_dir")
+            fsync_patcher.start()
+            self.addCleanup(fsync_patcher.stop)
+
+        namespace = f"storage-tests-{uuid.uuid4().hex}"
+        name = f"storage-{uuid.uuid4().hex}"
+        actor = create_named_storage_node(root, name=name, namespace=namespace)
+
+        def kill_detached_actor() -> None:
+            try:
+                self.ray.kill(
+                    get_named_storage_node(name, namespace=namespace), no_restart=True
+                )
+            except self.ray.exceptions.RayError:
+                pass
+
+        self.addCleanup(kill_detached_actor)
+        data = b"confirmado antes del reinicio"
+        checksum = hashlib.sha256(data).hexdigest()
+        self.assertEqual(
+            self.ray.get(actor.put.remote(self.BLOB_ID, data, checksum), timeout=30),
+            {"blob_id": self.BLOB_ID, "sha256": checksum, "size": len(data)},
+        )
+        pid_before = self.ray.get(actor.process_id.remote(), timeout=30)
+
+        # Descubrimiento por nombre es idempotente para un actor ya registrado.
+        discovered = create_named_storage_node(
+            root / "unused", name=name, namespace=namespace
+        )
+        self.assertEqual(
+            self.ray.get(discovered.process_id.remote(), timeout=30), pid_before
+        )
+        self.ray.kill(actor, no_restart=False)
+        restarted_actor = get_named_storage_node(name, namespace=namespace)
+
+        deadline = time.monotonic() + 60
+        pid_after = None
+        while time.monotonic() < deadline:
+            try:
+                pid_after = self.ray.get(restarted_actor.process_id.remote(), timeout=2)
+                if pid_after != pid_before:
+                    break
+            except self.ray.exceptions.RayError:
+                time.sleep(0.2)
+
+        self.assertIsNotNone(pid_after, "el actor no volvió a aceptar llamadas")
+        self.assertNotEqual(pid_before, pid_after, "Ray no reinició el proceso del actor")
+        self.assertEqual(
+            self.ray.get(restarted_actor.get.remote(self.BLOB_ID), timeout=30), data
+        )
 if __name__ == "__main__":
     unittest.main()

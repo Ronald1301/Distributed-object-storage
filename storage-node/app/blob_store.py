@@ -7,9 +7,11 @@ Estructura en el volumen del nodo:
     /data/tmp/                       escrituras en curso
 
 Escritura crash-safe: se escribe en tmp/, se verifica el SHA-256, se hace
-fsync, y se publica con rename atómico (+ fsync del directorio). Un fallo a
-mitad nunca deja un blob parcial visible: sólo restos en tmp/, que se
-limpian al arrancar.
+fsync, y se publica con rename atómico (+ fsync del directorio en sistemas que
+permiten abrir directorios con la API de Python). Windows no permite ese fsync
+de directorio; allí se conserva el fsync del archivo y el rename atómico.
+Un fallo a mitad nunca deja un blob parcial visible: sólo restos en tmp/, que
+se limpian al arrancar.
 """
 from __future__ import annotations
 
@@ -19,9 +21,9 @@ import os
 import re
 import time
 import uuid
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator
 
 BLOB_ID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")  # ULID (evita path traversal)
 CHUNK = 1024 * 1024
@@ -39,6 +41,10 @@ class ChecksumMismatch(Exception):
 
 
 def _fsync_dir(path: Path) -> None:
+    # os.open no admite directorios en Windows. Los archivos temporales ya se
+    # fsync antes del rename, así que se mantiene la publicación atómica allí.
+    if os.name == "nt":
+        return
     fd = os.open(path, os.O_RDONLY)
     try:
         os.fsync(fd)
@@ -77,7 +83,8 @@ class BlobStore:
         digest = hashlib.sha256()
         size = 0
         try:
-            with open(tmp, "wb") as fh:
+            # Escritura local por bloques para conservar memoria acotada.
+            with open(tmp, "wb") as fh:  # noqa: ASYNC230
                 async for chunk in chunks:
                     digest.update(chunk)
                     fh.write(chunk)
@@ -88,14 +95,16 @@ class BlobStore:
             if actual != expected_sha256:
                 raise ChecksumMismatch(expected_sha256, actual)
             meta_tmp = tmp.parent / f"{tmp.name}.meta"
-            with open(meta_tmp, "w") as fh:
+            # El sidecar se publica junto con el blob mediante rename atómico.
+            with open(meta_tmp, "w") as fh:  # noqa: ASYNC230
                 json.dump(
                     {
                         "blob_id": blob_id,
                         "object_id": object_id,
                         "sha256": actual,
                         "size": size,
-                        "stored_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        # datetime.UTC no existe en la versión mínima Python 3.10.
+                        "stored_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017
                     },
                     fh,
                 )
