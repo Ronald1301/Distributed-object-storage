@@ -97,7 +97,11 @@ docker compose --profile scale down -v
 - Estructura propuesta: `ray_proto/storage_actor.py`, `ray_proto/metadata_actor.py`, `ray_proto/driver.py`, `ray_proto/README.md`; tests en `ray_proto/tests/`.
 - Reutiliza de la versión nativa: ids ULID, checksum SHA-256, escritura atómica (temp + fsync + rename), `placement.py` (HRW) y el contrato HTTP.
 - Un `ObjectRef` es transporte, nunca almacenamiento duradero. Los reintentos de Ray no son exactly-once: cada intento usa un `blob_id` nuevo y el commit de metadatos es atómico; los huérfanos se recolectan.
-- Un actor reiniciado pierde su memoria: todo lo que deba sobrevivir se persiste en disco.
+- Un actor reiniciado pierde su memoria: el reinicio vuelve a ejecutar el constructor. `max_restarts` vale 0 por defecto (el actor no se reinicia): fíjalo de forma explícita. Todo lo que deba sobrevivir se persiste en disco y se recupera en el constructor.
+- Las tareas de actor son "a lo sumo una vez" por defecto (`max_task_retries=0`): un `RayActorError` puede ocurrir aunque la tarea se ejecutó. Los reintentos usan el mismo `request_id`. Las tareas normales reintentan 3 veces por defecto (`max_retries`) y no reintentan excepciones de la aplicación (`retry_exceptions=False`).
+- `ray.wait` devuelve listas (listas y no listas); la documentación no dice que cancele las no listas. "Lista" no equivale a éxito: haz `ray.get` de cada referencia y cuenta solo los éxitos.
+- `SPREAD` solo "intenta" repartir; no garantiza réplicas en nodos distintos. Un actor con nombre vive mientras viva el driver que lo creó, salvo `lifetime="detached"` (y entonces hay que matarlo con `ray.kill`). Los nombres se acotan por namespace.
+- Si muere el dueño de un `ObjectRef`, el objeto se pierde (`OwnerDiedError`); lo creado con `ray.put` no es recuperable.
 - Los experimentos (caída, nodo lento, concurrencia) se registran en `docs/fase1/experimentos.md` con hipótesis, resultado y evidencia.
 
 ## Seguridad
