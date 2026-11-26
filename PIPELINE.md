@@ -86,7 +86,24 @@ Cada uso se documenta: qué hizo Ray y qué tuvo que implementar la aplicación.
 | R8 | Mapa de dependencias del middleware | @agustin030902 | 3 | 29 nov |
 | R9 | `ai_use`, README y documentos de guía | @Ronald1301 | 2 | 29–30 nov |
 
-Dependencias: R6 usa las interfaces de R2 y R3 (se acuerdan el primer día); R5 necesita el código de R2, R3 y R6; R8 necesita la evidencia de R4.
+### Dependencias y orden de trabajo
+
+R2 y R3 pueden avanzar en paralelo. La dependencia que más puede frenar a ambos es dejar por escrito las firmas de sus actores para que R6 no tenga que adivinar ni cambiar interfaces durante la integración.
+
+| Orden | Tarea | Depende de | Qué desbloquea / cuándo puede empezar Agustín |
+|---|---|---|---|
+| 0 | **R1 — ramas y línea base** (#30) | Nada | **Completada:** PR #40 y #41; el issue #30 está cerrado. No repetir. |
+| 1A | **R2 — StorageNode** (#31, extensión #45) | R1 | Base integrada por PR #42. La extensión está en PR #49 y espera revisión/merge. Desbloquea la integración de almacenamiento en R6. |
+| 1B | **R3 — MetadataService** (#35, extensión #47) | R1; acordar el contrato que consumirá R6 | Base integrada por PR #43. Agustín puede trabajar ya en #47 (actor detached y recuperación); debe fijar junto a Ronald la firma que usará R6. |
+| 2 | **Acordar firmas R2/R3** | Métodos reales de los actores | Ronald y Agustín anotan nombres, argumentos y respuestas de las operaciones del driver. Esto desbloquea R6. Se puede acordar mientras se revisan #45 y #47. |
+| 3 | **R6 — PUT/GET/DELETE/LIST y extensión #46** (#32, #46) | Firmas acordadas de R2/R3; para integración final, PR #49 y la interfaz de R3 estables | Ronald puede crear el driver y trabajar con dobles/stubs desde ya. Su integración real habilita R4 y el diagrama final R5. |
+| 4 | **R7 — contrato de comportamiento** (#36) | La semántica objetivo; validar contra R6 antes de cerrar | Agustín puede redactar el borrador ahora; confirma garantías y errores cuando R6 tenga operaciones ejecutables. |
+| 5 | **R4 — experimentos** (#33) | R6 ejecutable y actores R2/R3 disponibles | Ronald puede preparar escenarios ya; debe ejecutar y registrar evidencia después de integrar R6. Esa evidencia desbloquea el cierre de R8. |
+| 6 | **R5 — diagrama** (#37) | Código estable de R2, R3 y R6 | Agustín puede preparar la estructura Mermaid ahora; dibuja los flujos definitivos cuando R6 esté integrado. |
+| 7 | **R8 — mapa de dependencias** (#38, extensión #48) | Documentación oficial de Ray y evidencia de R4 | Agustín puede investigar/documentar Ray en paralelo; completa las filas con resultados cuando Ronald entregue R4. |
+| Paralelo | **R9 — `ai_use` y guías** (#34) | No bloquea R2–R8; sincronizar al final con ramas y comandos reales | Ronald puede avanzarla sin esperar las operaciones; verificar los comandos finales al terminar R6. |
+
+**Camino práctico para desbloquear a Agustín:** (1) Ronald y Agustín acuerdan ahora las firmas de StorageNode y MetadataService; (2) Ronald obtiene la revisión/merge del PR #49 mientras Agustín termina #47; (3) Ronald integra R6 con esas firmas; (4) Agustín puede cerrar R7 y R5 sobre el comportamiento real, y R8 cuando exista la evidencia R4. R7, R5 y R8 admiten borradores en paralelo desde ahora.
 
 ### Calendario
 
